@@ -33,7 +33,7 @@ RUN npm install -g serve
 COPY --from=build /app/dist /app
 
 # Copy a script to inject environment variables
-COPY inject-env.js /app/inject-env.js
+COPY inject-env.cjs /app/inject-env.cjs
 
 # Expose port 5521 to have it mapped by the Docker daemon
 EXPOSE 5521
@@ -51,4 +51,4 @@ RUN addgroup -S ch-group -g 1001 && adduser -S ch-user -u 1001 -G ch-group
 RUN chown -R ch-user:ch-group /app
 
 # Use a shell script to inject environment variables and then serve the app
-CMD ["/bin/sh", "-c", "node inject-env.js && serve -s -l 5521"]
+CMD ["/bin/sh", "-c", "node inject-env.cjs && serve -s -l 5521"]

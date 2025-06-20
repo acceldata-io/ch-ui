@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const indexHtmlPath = path.join(__dirname, "index.html");
+const indexHtmlPath = path.join(__dirname, "dist", "index.html");
 let indexHtmlContent = fs.readFileSync(indexHtmlPath, "utf8");
 
 // Inject the environment variables
