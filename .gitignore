@@ -51,6 +51,8 @@ ui/dist/
 
 .claude
 
+#Remove ch-ui-wrapper
+ch-ui-wrapper/target/*
 
 .gocache/
 
