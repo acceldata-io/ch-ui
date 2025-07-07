@@ -21,10 +21,14 @@ package com.acceldata.chuiwrapper;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.boot.context.ApplicationPidFileWriter;
 
 @SpringBootApplication
 public class ClickhouseUIServer {
     public static void main(String[] args) {
-        SpringApplication.run(ClickhouseUIServer.class, args);
+        SpringApplication application =
+                new SpringApplication(ClickhouseUIServer.class);
+        application.addListeners(new ApplicationPidFileWriter());
+        application.run(args);
     }
 }
