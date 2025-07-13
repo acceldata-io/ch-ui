@@ -137,13 +137,13 @@ const Sidebar = () => {
   const bottomNavLinks = [
     { to: "/settings", label: "Settings", icon: CogIcon, isNewWindow: false },
     {
-      to: "https://github.com/caioricciuti/ch-ui?utm_source=ch-ui&utm_medium=sidebar",
+      to: "https://github.com/acceldata-io/ch-ui?utm_source=ch-ui&utm_medium=sidebar",
       label: "GitHub",
       icon: Github,
       isNewWindow: true,
     },
     {
-      to: "https://ch-ui.com/docs?utm_source=ch-ui&utm_medium=sidebar",
+      to: "https://docs.acceldata.io/odp?utm_source=ch-ui&utm_medium=sidebar",
       label: "Documentation",
       icon: BookText,
       isNewWindow: true,
