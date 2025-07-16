@@ -35,7 +35,7 @@ const resourceCards = [
   {
     title: "Star us on GitHub!",
     description: "Support our project by starring it on GitHub.",
-    link: "https://github.com/caioricciuti/ch-ui",
+    link: "https://github.com/acceldata-io/ch-ui",
     Icon: Github,
     action: "Star on GitHub",
   },
@@ -43,14 +43,14 @@ const resourceCards = [
     title: "ClickHouse Docs",
     description: "Explore ClickHouse documentation and learn more.",
     Icon: BookOpen,
-    link: "https://clickhouse.com/docs/en/intro",
+    link: "https://docs.acceldata.io/odp",
     action: "Read Docs",
   },
   {
     title: "CH-UI Documentation",
     Icon: ExternalLink,
     description: "Learn how to make the most of CH-UI.",
-    link: "https://ch-ui.com",
+    link: "https://docs.acceldata.io/odp",
     action: "Explore CH-UI",
   },
 ];
