@@ -23,8 +23,15 @@
 
     <groupId>com.acceldata.chuiwrapper</groupId>
     <artifactId>ch-ui-wrapper</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0.3.2.3.6-2</version>
     <packaging>jar</packaging>
+
+    <properties>
+        <tomcat.version>9.0.109</tomcat.version>
+        <snakeyaml.version>2.0</snakeyaml.version>
+        <jackson-bom.version>2.15.0</jackson-bom.version>
+        <logback.version>1.4.12</logback.version>
+    </properties>
 
     <dependencies>
         <dependency>
