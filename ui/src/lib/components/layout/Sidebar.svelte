@@ -59,7 +59,7 @@
     { type: 'models', label: 'Models', icon: Boxes },
     { type: 'brain', label: 'Brain', icon: Brain },
     { type: 'admin', label: 'Admin', icon: Shield },
-    { type: 'settings', label: 'License', icon: Settings },
+    { type: 'settings', label: 'Settings', icon: Settings },
     { type: 'external', label: 'CH-UI Docs', icon: ExternalLink, href: 'https://ch-ui.com/docs' },
   ]
 

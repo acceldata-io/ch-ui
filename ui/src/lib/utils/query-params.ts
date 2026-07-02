@@ -1,6 +1,6 @@
 // Detect ClickHouse bind parameters of the form {name:Type} in a SQL string.
 // ClickHouse binds these via HTTP param_<name>=value URL params, which CH-UI
-// forwards on execution (a Pro feature).
+// forwards on execution.
 
 export interface QueryParam {
   name: string
