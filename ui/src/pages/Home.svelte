@@ -4,7 +4,6 @@
     BookOpen,
     Bookmark,
     Brain,
-    Clock3,
     Home,
     LayoutDashboard,
     Shield,
@@ -52,13 +51,6 @@
       description: 'Browse and manage saved SQL',
       icon: Bookmark,
       run: () => openSingletonTab('saved-queries', 'Saved Queries'),
-    },
-    {
-      id: 'schedules',
-      title: 'Schedules',
-      description: 'Manage cron jobs and run history',
-      icon: Clock3,
-      run: () => openSingletonTab('schedules', 'Schedules'),
     },
     {
       id: 'dashboards',
@@ -130,11 +122,9 @@
     }
     if (tab.type === 'saved-queries') openSingletonTab('saved-queries', 'Saved Queries')
     if (tab.type === 'dashboards') openSingletonTab('dashboards', 'Dashboards')
-    if (tab.type === 'schedules') openSingletonTab('schedules', 'Schedules')
     if (tab.type === 'brain') openSingletonTab('brain', 'Brain')
     if (tab.type === 'admin') openSingletonTab('admin', 'Admin')
-    if (tab.type === 'settings') openSingletonTab('settings', 'License')
-    if (tab.type === 'governance') openSingletonTab('governance', 'Governance')
+    if (tab.type === 'settings') openSingletonTab('settings', 'Settings')
     if (tab.type === 'pipelines') openSingletonTab('pipelines', 'Pipelines')
   }
 
@@ -150,11 +140,9 @@
         return 'Dashboard'
       case 'saved-queries':
       case 'dashboards':
-      case 'schedules':
       case 'brain':
       case 'admin':
       case 'settings':
-      case 'governance':
       case 'pipelines':
         return tab.name
       default:
@@ -177,10 +165,9 @@
     if (tab.type === 'table' || tab.type === 'database') return Table2
     if (tab.type === 'dashboard' || tab.type === 'dashboards') return LayoutDashboard
     if (tab.type === 'saved-queries') return Bookmark
-    if (tab.type === 'schedules') return Clock3
     if (tab.type === 'brain') return Brain
     if (tab.type === 'pipelines') return Workflow
-    if (tab.type === 'admin' || tab.type === 'governance') return Shield
+    if (tab.type === 'admin') return Shield
     return Home
   }
 </script>

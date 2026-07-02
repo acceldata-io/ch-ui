@@ -8,33 +8,25 @@ const TAB_PATHS: Record<string, string> = {
   'home': '/',
   'saved-queries': '/saved-queries',
   'dashboards': '/dashboards',
-  'schedules': '/schedules',
   'brain': '/brain',
   'admin': '/admin',
-  'governance': '/governance',
   'pipelines': '/pipelines',
   'models': '/models',
   'model': '/models',
   'telemetry': '/telemetry',
-  'cluster-health': '/cluster-health',
-  'query-insights': '/query-insights',
-  'settings': '/license',
+  'settings': '/settings',
 }
 
 const PATH_TABS: Record<string, { type: SingletonTab['type']; label: string }> = {
   '/saved-queries': { type: 'saved-queries', label: 'Saved Queries' },
   '/dashboards': { type: 'dashboards', label: 'Dashboards' },
-  '/schedules': { type: 'schedules', label: 'Schedules' },
   '/brain': { type: 'brain', label: 'Brain' },
   '/admin': { type: 'admin', label: 'Admin' },
-  '/governance': { type: 'governance', label: 'Governance' },
   '/pipelines': { type: 'pipelines', label: 'Pipelines' },
   '/models': { type: 'models', label: 'Models' },
   '/telemetry': { type: 'telemetry', label: 'Telemetry' },
-  '/cluster-health': { type: 'cluster-health', label: 'Cluster Health' },
-  '/query-insights': { type: 'query-insights', label: 'Query Insights' },
-  '/settings': { type: 'settings', label: 'License' },
-  '/license': { type: 'settings', label: 'License' },
+  '/settings': { type: 'settings', label: 'Settings' },
+  '/license': { type: 'settings', label: 'Settings' },
 }
 
 // Prevents pushState during popstate-triggered tab activation

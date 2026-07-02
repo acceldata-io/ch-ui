@@ -42,15 +42,6 @@ export interface HostInfo {
   collected_at: string
 }
 
-/** License info returned by the server */
-export interface LicenseInfo {
-  edition: string
-  valid: boolean
-  customer?: string
-  expires_at?: string
-  license_id?: string
-}
-
 /** Saved query */
 export interface SavedQuery {
   id: string
@@ -88,37 +79,6 @@ export interface Panel {
   layout_h: number
   created_at: string
   updated_at: string
-}
-
-/** Scheduled query */
-export interface Schedule {
-  id: string
-  name: string
-  saved_query_id: string
-  connection_id: string | null
-  cron: string
-  timezone: string
-  enabled: boolean
-  timeout_ms: number
-  last_run_at: string | null
-  next_run_at: string | null
-  last_status: string | null
-  last_error: string | null
-  created_by: string
-  created_at: string
-  updated_at: string
-}
-
-/** Schedule execution run */
-export interface ScheduleRun {
-  id: string
-  schedule_id: string
-  started_at: string
-  finished_at: string | null
-  status: string
-  rows_affected: number
-  elapsed_ms: number
-  error: string | null
 }
 
 export interface StatThreshold {

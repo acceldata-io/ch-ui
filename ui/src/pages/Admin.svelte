@@ -25,7 +25,6 @@
   import HelpTip from '../lib/components/common/HelpTip.svelte'
   import ConfirmDialog from '../lib/components/common/ConfirmDialog.svelte'
   import { Shield, RefreshCw, Users, Database, Activity, LogIn, ChevronDown, ChevronRight, Brain, UserPlus, KeyRound, Trash2, Plus, Copy, GitBranch, CloudDownload, Check, X as XIcon } from 'lucide-svelte'
-  import { isProActive } from '../lib/stores/license.svelte'
   import { getSession } from '../lib/stores/session.svelte'
   import { getGitHubIntegration, saveGitHubIntegration, deleteGitHubIntegration, testGitHubConnection, triggerGitHubSync, getGitHubSyncLogs } from '../lib/api/github'
   import type { GitHubIntegration, GitHubSyncLog } from '../lib/types/models'
@@ -1878,13 +1877,7 @@
       {/if}
 
     {:else if activeTab === 'github'}
-      {#if !isProActive()}
-        <div class="flex flex-col items-center justify-center py-16 text-center">
-          <GitBranch size={32} class="text-gray-400 mb-3" />
-          <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-1">GitHub Model Sync</h2>
-          <p class="text-sm text-gray-500 max-w-md">Connect a GitHub repository and sync your SQL models. Requires a Pro license.</p>
-        </div>
-      {:else if ghLoading}
+      {#if ghLoading}
         <div class="flex items-center justify-center py-12"><Spinner /></div>
       {:else}
         <div class="max-w-2xl mx-auto space-y-6">

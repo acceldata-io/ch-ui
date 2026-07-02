@@ -1,10 +1,10 @@
 <script lang="ts">
   import { tick, onMount, untrack } from 'svelte'
   import {
-    Search, Plus, Table2, Sparkles, LayoutDashboard, Bookmark, Clock,
+    Search, Plus, Table2, Sparkles, LayoutDashboard, Bookmark,
     Brain, Shield, Settings, Moon, Sun, LogOut, SquareTerminal, Home,
     Workflow, Boxes, Activity, FileText, GitBranch, ChartBar,
-    Network, KeyRound, Scale, MessageSquare, HeartPulse, Gauge,
+    Network, KeyRound, MessageSquare,
     Cpu, Info, Hash, Zap,
   } from 'lucide-svelte'
   import { closeCommandPalette, isCommandPaletteOpen } from '../../stores/command-palette.svelte'
@@ -16,7 +16,6 @@
   import { getDatabases, loadDatabases, loadTables } from '../../stores/schema.svelte'
   import { getSession, logout } from '../../stores/session.svelte'
   import { getTheme, toggleTheme } from '../../stores/theme.svelte'
-  import { isProActive } from '../../stores/license.svelte'
   import { listWorkspaceDashboards, listWorkspaceSavedQueries } from '../../api/workspace'
   import { listModels } from '../../api/models'
   import { listPipelines } from '../../api/pipelines'
@@ -87,7 +86,6 @@
   const tabs = $derived(getTabs())
   const databases = $derived(getDatabases())
   const session = $derived(getSession())
-  const pro = $derived(isProActive())
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
   const cmd = isMac ? '⌘' : 'Ctrl'
 
@@ -114,54 +112,43 @@
       mkPage('home', 'Home', Home, () => openHomeTab(), { weight: 10, keywords: 'home start workspace' }),
       mkPage('saved-queries', 'Saved Queries', Bookmark, () => openSingletonTab('saved-queries', 'Saved Queries'), { keywords: 'bookmarks queries history' }),
       mkPage('dashboards', 'Dashboards', LayoutDashboard, () => openSingletonTab('dashboards', 'Dashboards'), { keywords: 'charts panels metrics dash' }),
-      mkPage('schedules', 'Schedules', Clock, () => openSingletonTab('schedules', 'Schedules'), { keywords: 'cron runs scheduled jobs' }),
       mkPage('brain', 'Brain AI', Brain, () => openSingletonTab('brain', 'Brain'), { keywords: 'ai assistant chat agent llm' }),
       mkPage('pipelines', 'Pipelines', Workflow, () => openSingletonTab('pipelines', 'Pipelines'), { keywords: 'ingest etl streams' }),
       mkPage('models', 'Models', Boxes, () => openSingletonTab('models', 'Models'), { keywords: 'dbt models materialize' }),
-      mkPage('governance', 'Governance', Scale, () => openSingletonTab('governance', 'Governance'), { keywords: 'access policies rules audit' }),
-      mkPage('cluster-health', 'Cluster Health', HeartPulse, () => openSingletonTab('cluster-health', 'Cluster Health'), { keywords: 'replication merges mutations parts keeper backups monitoring' }),
-      mkPage('query-insights', 'Query Insights', Gauge, () => openSingletonTab('query-insights', 'Query Insights'), { keywords: 'query log latency slow p95 errors memory insights analytics' }),
       mkPage('telemetry', 'Telemetry', Activity, () => openSingletonTab('telemetry', 'Telemetry'), { keywords: 'otel observability logs traces metrics' }),
       mkPage('admin', 'Admin', Shield, () => openSingletonTab('admin', 'Admin'), { keywords: 'users audit query log' }),
-      mkPage('settings', 'Settings', Settings, () => openSingletonTab('settings', 'Settings'), { keywords: 'config preferences license' }),
+      mkPage('settings', 'Settings', Settings, () => openSingletonTab('settings', 'Settings'), { keywords: 'config preferences' }),
     )
 
-    if (pro) {
-      const telTabs: Array<[string, string, typeof Search, string]> = [
-        ['logs', 'Telemetry · Logs', FileText, 'log records ingest'],
-        ['services', 'Telemetry · Services', Network, 'services rps p95 errors'],
-        ['traces', 'Telemetry · Traces', GitBranch, 'spans waterfall trace'],
-        ['metrics', 'Telemetry · Metrics', ChartBar, 'metrics gauges counters histogram'],
-        ['endpoints', 'Telemetry · Endpoints', KeyRound, 'otlp ingest tokens endpoints'],
-      ]
-      for (const [slug, label, icon, kw] of telTabs) {
-        items.push({
-          id: `tel-${slug}`,
-          group: 'telemetry',
-          label,
-          sub: 'Open telemetry tab',
-          icon,
-          keywords: kw,
-          run: () => {
-            setTelemetryTab(slug)
-            openSingletonTab('telemetry', 'Telemetry')
-          },
-        })
-      }
+    const telTabs: Array<[string, string, typeof Search, string]> = [
+      ['logs', 'Telemetry · Logs', FileText, 'log records ingest'],
+      ['services', 'Telemetry · Services', Network, 'services rps p95 errors'],
+      ['traces', 'Telemetry · Traces', GitBranch, 'spans waterfall trace'],
+      ['metrics', 'Telemetry · Metrics', ChartBar, 'metrics gauges counters histogram'],
+      ['endpoints', 'Telemetry · Endpoints', KeyRound, 'otlp ingest tokens endpoints'],
+    ]
+    for (const [slug, label, icon, kw] of telTabs) {
+      items.push({
+        id: `tel-${slug}`,
+        group: 'telemetry',
+        label,
+        sub: 'Open telemetry tab',
+        icon,
+        keywords: kw,
+        run: () => {
+          setTelemetryTab(slug)
+          openSingletonTab('telemetry', 'Telemetry')
+        },
+      })
     }
 
     items.push(
       mkAction('new-query', 'New Query', Plus, `${cmd}⇧N`, () => openQueryTab(), 'create sql blank editor'),
+      mkAction('new-dashboard', 'New Dashboard', Plus, undefined, () => openSingletonTab('dashboards', 'Dashboards'), 'create dashboard'),
+      mkAction('new-model', 'New Model', Plus, undefined, () => openSingletonTab('models', 'Models'), 'create model dbt'),
+      mkAction('new-pipeline', 'New Pipeline', Plus, undefined, () => openSingletonTab('pipelines', 'Pipelines'), 'create pipeline'),
+      mkAction('new-brain-chat', 'New Brain Chat', Plus, undefined, () => openSingletonTab('brain', 'Brain'), 'new chat brain ai'),
     )
-
-    if (pro) {
-      items.push(
-        mkAction('new-dashboard', 'New Dashboard', Plus, undefined, () => openSingletonTab('dashboards', 'Dashboards'), 'create dashboard'),
-        mkAction('new-model', 'New Model', Plus, undefined, () => openSingletonTab('models', 'Models'), 'create model dbt'),
-        mkAction('new-pipeline', 'New Pipeline', Plus, undefined, () => openSingletonTab('pipelines', 'Pipelines'), 'create pipeline'),
-        mkAction('new-brain-chat', 'New Brain Chat', Plus, undefined, () => openSingletonTab('brain', 'Brain'), 'new chat brain ai'),
-      )
-    }
 
     items.push(
       mkAction('theme', getTheme() === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme',
@@ -172,16 +159,14 @@
       items.push(mkAction('sign-out', 'Sign out', LogOut, undefined, () => logout(), 'logout sign out session'))
     }
 
-    if (pro) {
-      items.push(
-        mkHelp('help-prefixes', 'Prefixes — scope to one kind',
-          '> actions · t: tables · q: saved queries · d: dashboards · m: models · p: pipelines · b: brain chats · tel: telemetry · ? help'),
-        mkHelp('help-shortcuts', 'Keyboard shortcuts',
-          `${cmd}K open palette · ${cmd}⇧N new query · ↑↓ select · Enter run · Esc close`),
-        mkHelp('help-tip-brain', 'Type a question — Brain answers it',
-          'End your query with "?" and hit Enter to seed a Brain chat with the prompt.'),
-      )
-    }
+    items.push(
+      mkHelp('help-prefixes', 'Prefixes — scope to one kind',
+        '> actions · t: tables · q: saved queries · d: dashboards · m: models · p: pipelines · b: brain chats · tel: telemetry · ? help'),
+      mkHelp('help-shortcuts', 'Keyboard shortcuts',
+        `${cmd}K open palette · ${cmd}⇧N new query · ↑↓ select · Enter run · Esc close`),
+      mkHelp('help-tip-brain', 'Type a question — Brain answers it',
+        'End your query with "?" and hit Enter to seed a Brain chat with the prompt.'),
+    )
 
     return items
   }
@@ -206,7 +191,6 @@
   }
 
   const dynamic = $derived.by<CommandItem[]>(() => {
-    if (!pro) return []
     const items: CommandItem[] = []
 
     for (const q of savedQueries) {
@@ -327,13 +311,11 @@
   })
 
   const parsed = $derived.by<{ scope: Group | null; term: string }>(() => {
-    if (!pro) return { scope: null, term: query.trim().toLowerCase() }
     if (scopeGroup) return { scope: scopeGroup, term: query.trim() }
     return { scope: null, term: query.trim() }
   })
 
   const brainSuggestion = $derived.by<CommandItem | null>(() => {
-    if (!pro) return null
     const t = parsed.term.trim()
     if (parsed.scope) return null
     if (!t) return null
@@ -379,13 +361,6 @@
       })
       .filter((x): x is { item: CommandItem; score: number } => x !== null)
 
-    if (!pro) {
-      ranked.sort((a, b) => b.score - a.score)
-      const flat = ranked.slice(0, 28)
-      if (flat.length === 0) return []
-      return [{ group: 'page' as Group, items: flat }]
-    }
-
     if (inputEmpty) {
       const recentOnly = ranked.filter(x => x.item.group === 'recent').slice(0, 5)
       const curatedIds = new Set([
@@ -419,7 +394,7 @@
   const flat = $derived.by<CommandItem[]>(() => grouped.flatMap(g => g.items.map(x => x.item)))
 
   function highlight(label: string, term: string): Array<{ ch: string; on: boolean }> {
-    if (!term || !pro) return [{ ch: label, on: false }]
+    if (!term) return [{ ch: label, on: false }]
     const lt = label.toLowerCase()
     const lq = term.toLowerCase()
     const out: Array<{ ch: string; on: boolean }> = []
@@ -442,7 +417,6 @@
     if (needTables.length > 0) {
       await Promise.allSettled(needTables.map(d => loadTables(d.name)))
     }
-    if (!pro) return
     const results = await Promise.allSettled([
       listWorkspaceSavedQueries().catch(() => []),
       listWorkspaceDashboards().catch(() => []),
@@ -501,7 +475,7 @@
   }
 
   function handleInput() {
-    if (!pro || scopeGroup) return
+    if (scopeGroup) return
     const raw = query
     for (const [prefix, group] of Object.entries(PREFIXES)) {
       if (raw === prefix || raw.startsWith(prefix + ' ')) {
@@ -540,7 +514,7 @@
   })
 
   const scopeChip = $derived.by(() => {
-    if (!pro || !scopeGroup) return null
+    if (!scopeGroup) return null
     return { group: scopeGroup, label: GROUP_LABEL[scopeGroup] }
   })
 </script>
@@ -572,7 +546,7 @@
           type="text"
           placeholder={scopeChip
             ? `Search ${scopeChip.label.toLowerCase()}…`
-            : pro ? 'Search anything · try ? for help' : 'Search actions, tables, tabs...'}
+            : 'Search anything · try ? for help'}
           class="w-full bg-transparent text-sm text-gray-800 dark:text-gray-200 placeholder:text-gray-400 outline-none"
         />
         <span class="text-[10px] text-gray-400 px-2 py-1 rounded border border-gray-300/70 dark:border-gray-700/80 shrink-0">ESC</span>
@@ -584,13 +558,11 @@
           <div class="px-3 py-10 text-center text-sm text-gray-500">
             <Search size={20} class="mx-auto mb-2 text-gray-400" />
             No match for "{parsed.term || query}"
-            {#if pro}
-              <div class="mt-3 text-[11px] text-gray-400">
-                Try <code class="text-[10px]">?</code> for help · <code class="text-[10px]">&gt;</code> for actions · <code class="text-[10px]">t:</code> for tables
-              </div>
-            {/if}
+            <div class="mt-3 text-[11px] text-gray-400">
+              Try <code class="text-[10px]">?</code> for help · <code class="text-[10px]">&gt;</code> for actions · <code class="text-[10px]">t:</code> for tables
+            </div>
           </div>
-        {:else if pro}
+        {:else}
           {#each grouped as g (g.group)}
             <div class="px-2 pt-2 pb-1 flex items-center gap-2">
               <span class="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400 font-medium">
@@ -630,25 +602,6 @@
               </button>
             {/each}
           {/each}
-        {:else}
-          {#each flat as item, idx (item.id)}
-            <button
-              class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors {idx === selectedIdx ? 'bg-ch-blue/10 text-ch-blue' : 'hover:bg-gray-200/55 dark:hover:bg-gray-800/60 text-gray-700 dark:text-gray-300'}"
-              onclick={() => runCommand(item)}
-              onmouseenter={() => selectedIdx = idx}
-            >
-              <item.icon size={15} class={idx === selectedIdx ? 'text-ch-blue' : 'text-gray-500'} />
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium truncate">{item.label}</span>
-                {#if item.sub}
-                  <span class="block text-[11px] text-gray-500 dark:text-gray-400 truncate">{item.sub}</span>
-                {/if}
-              </span>
-              {#if idx === selectedIdx}
-                <span class="text-[10px] text-gray-500 px-2 py-1 rounded border border-gray-300/70 dark:border-gray-700/80">ENTER</span>
-              {/if}
-            </button>
-          {/each}
         {/if}
       </div>
 
@@ -657,11 +610,9 @@
         <span>
           <span class="font-medium">↑↓</span> navigate · <span class="font-medium">↵</span> run · <span class="font-medium">esc</span> close
         </span>
-        {#if pro}
-          <span>
-            <code class="text-[10px]">?</code> for help · <code class="text-[10px]">{cmd}K</code> to toggle
-          </span>
-        {/if}
+        <span>
+          <code class="text-[10px]">?</code> for help · <code class="text-[10px]">{cmd}K</code> to toggle
+        </span>
       </div>
     </div>
   </div>

@@ -5,7 +5,6 @@
   import { getSession, logout } from '../../stores/session.svelte'
   import { toggleTheme, getTheme } from '../../stores/theme.svelte'
   import { openCommandPalette } from '../../stores/command-palette.svelte'
-  import { isProActive, loadLicense } from '../../stores/license.svelte'
   import { checkForUpdate, hasUpdate, getLatestVersion } from '../../stores/update-check.svelte'
   import { fetchNodeInfo, fetchClusterInfo } from '../../api/query'
   import DatabaseTree from '../explorer/DatabaseTree.svelte'
@@ -13,10 +12,8 @@
     Plus,
     Bookmark,
     LayoutDashboard,
-    Clock,
     Brain,
     Shield,
-    Scale,
     Workflow,
     Boxes,
     Settings,
@@ -32,8 +29,6 @@
     Activity,
     ArrowUpCircle,
     Server,
-    HeartPulse,
-    Gauge,
   } from 'lucide-svelte'
 
   const session = $derived(getSession())
@@ -47,7 +42,6 @@
     type: SingletonTab['type']
     label: string
     icon: typeof Bookmark
-    pro?: boolean
   }
   interface NavItemExternal {
     type: 'external'
@@ -63,11 +57,7 @@
     { type: 'telemetry', label: 'Telemetry', icon: Activity },
     { type: 'pipelines', label: 'Pipelines', icon: Workflow },
     { type: 'models', label: 'Models', icon: Boxes },
-    { type: 'schedules', label: 'Schedules', icon: Clock, pro: true },
     { type: 'brain', label: 'Brain', icon: Brain },
-    { type: 'governance', label: 'Governance', icon: Scale, pro: true },
-    { type: 'cluster-health', label: 'Cluster Health', icon: HeartPulse, pro: true },
-    { type: 'query-insights', label: 'Query Insights', icon: Gauge, pro: true },
     { type: 'admin', label: 'Admin', icon: Shield },
     { type: 'settings', label: 'License', icon: Settings },
     { type: 'external', label: 'CH-UI Docs', icon: ExternalLink, href: 'https://ch-ui.com/docs' },
@@ -87,7 +77,6 @@
   let sidebarWidth = $state(isNaN(savedWidth) ? DEFAULT_WIDTH : savedWidth)
   let menuCollapsed = $state(savedMenuCollapsed)
   let dragging = $state(false)
-  const licensedPro = $derived(isProActive())
   const activeTab = $derived(getActiveTab())
 
   async function loadNodeAndClusterInfo() {
@@ -109,7 +98,6 @@
   }
 
   onMount(() => {
-    loadLicense()
     if (session?.appVersion) checkForUpdate(session.appVersion)
     if (session) loadNodeAndClusterInfo()
 
@@ -310,9 +298,6 @@
                   >
                     <item.icon size={15} />
                     <span class="truncate">{item.label}</span>
-                    {#if item.pro && !licensedPro}
-                      <span class="ml-auto text-[10px] uppercase tracking-wider text-ch-orange font-semibold">Pro</span>
-                    {/if}
                   </button>
                 {/if}
               {/each}

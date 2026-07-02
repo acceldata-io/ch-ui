@@ -24,10 +24,9 @@
   import { error as toastError, success as toastSuccess } from '../../../stores/toast.svelte'
   import { detectQueryParams } from '../../../utils/query-params'
   import { parseCHError, byteToCharOffset } from '../../../utils/ch-error'
-  import { isProActive, loadLicense } from '../../../stores/license.svelte'
-  import { openSingletonTab, openQueryTab } from '../../../stores/tabs.svelte'
+  import { openQueryTab } from '../../../stores/tabs.svelte'
   import { onMount } from 'svelte'
-  import { Lock, Braces, X } from 'lucide-svelte'
+  import { Braces, X } from 'lucide-svelte'
   import SqlEditor from '../../editor/SqlEditor.svelte'
   import Toolbar from '../../editor/Toolbar.svelte'
   import ResultPanel from '../../editor/ResultPanel.svelte'
@@ -96,12 +95,11 @@
 
   const result = $derived(getTabResult(tab.id))
 
-  // ── Query parameters ({name:Type}) — Pro feature ──
+  // ── Query parameters ({name:Type}) ──
   // The component is keyed per tab id, so seeding currentSql once in onMount is
   // safe; it's kept in sync afterwards by the editor's onchange handler.
   let currentSql = $state('')
   const detectedParams = $derived(detectQueryParams(currentSql))
-  const proActive = $derived(isProActive())
   let paramValues = $state<Record<string, string>>({})
   let showParamsPanel = $state(false)
   let autoOpenedFor = ''
@@ -118,7 +116,6 @@
 
   onMount(() => {
     currentSql = tab.sql ?? ''
-    void loadLicense()
   })
 
   function handleSQLChange(sql: string) {
@@ -258,13 +255,7 @@
     }
     if (!query) return
 
-    // Query parameters ({name:Type}) are a Pro feature. Block non-Pro users with
-    // an upsell rather than letting ClickHouse fail with an unbound-parameter error.
     const runParams = detectQueryParams(query)
-    if (runParams.length > 0 && !proActive) {
-      toastError('Query parameters are a Pro feature — upgrade to run parameterized queries.')
-      return
-    }
     const params = runParams.length > 0
       ? Object.fromEntries(runParams.map(p => [p.name, paramValues[p.name] ?? '']))
       : undefined
@@ -611,7 +602,7 @@
     </div>
   </div>
 
-  <!-- Query parameters panel (Pro) -->
+  <!-- Query parameters panel -->
   {#if showParamsPanel}
     <div class="shrink-0 border-b border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40">
       <div class="flex items-center justify-between px-3 py-1.5 border-b border-gray-200/70 dark:border-gray-800/70">
@@ -638,12 +629,7 @@
           <pre class="mt-2 text-[11px] font-mono text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-950/40 border border-gray-200 dark:border-gray-800 rounded-md px-2.5 py-2 overflow-x-auto">SELECT * FROM events
 WHERE user_id = {'{user_id:UInt64}'}
   AND created_at >= {'{since:DateTime}'}</pre>
-          {#if !proActive}
-            <p class="mt-2 text-[11px] text-gray-400 flex items-center gap-1">
-              <Lock size={11} class="text-ch-orange" /> Running parameterized queries is a Pro feature.
-            </p>
-          {/if}
-        {:else if proActive}
+        {:else}
           <div class="flex flex-wrap gap-3">
             {#each detectedParams as p (p.name)}
               <label class="flex flex-col gap-1">
@@ -663,22 +649,6 @@ WHERE user_id = {'{user_id:UInt64}'}
           <p class="mt-2 text-[11px] text-gray-400">
             Values are bound safely by ClickHouse and saved as defaults with the query.
           </p>
-        {:else}
-          <!-- Pro upsell -->
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <Lock size={14} class="text-ch-orange shrink-0" />
-              <span>
-                This query uses <strong>{detectedParams.length}</strong>
-                parameter{detectedParams.length === 1 ? '' : 's'}
-                (<span class="font-mono">{detectedParams.map((p) => p.name).join(', ')}</span>).
-                Query parameters are a <strong>Pro</strong> feature.
-              </span>
-            </div>
-            <button class="ds-btn-primary px-2.5 py-1 shrink-0" onclick={() => openSingletonTab('settings', 'License')}>
-              Upgrade
-            </button>
-          </div>
         {/if}
       </div>
     </div>

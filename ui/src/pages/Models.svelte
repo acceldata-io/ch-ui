@@ -3,7 +3,6 @@
   import type { Model, ModelRun, ModelRunResult, ModelSchedule, DAGNode, DAGEdge, Pipeline } from '../lib/types/models'
   import * as api from '../lib/api/models'
   import { triggerGitHubSync, getGitHubIntegration } from '../lib/api/github'
-  import { isProActive } from '../lib/stores/license.svelte'
   import { getSession } from '../lib/stores/session.svelte'
   import { refreshModelCache } from '../lib/editor/completions'
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
@@ -173,7 +172,6 @@
   })
 
   async function checkGitHubIntegration() {
-    if (!isProActive()) return
     try {
       const session = getSession()
       if (!session) return

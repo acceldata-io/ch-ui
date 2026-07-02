@@ -1,21 +1,14 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { getGroupActiveTab } from '../../stores/tabs.svelte'
   import type { QueryTab, TableTab, DatabaseTab, DashboardTab, ModelTab } from '../../stores/tabs.svelte'
-  import { loadLicense, isProActive, isLicenseLoading } from '../../stores/license.svelte'
   import QueryContent from './content/QueryContent.svelte'
   import TableContent from './content/TableContent.svelte'
   import DatabaseContent from './content/DatabaseContent.svelte'
-  import ProRequired from '../common/ProRequired.svelte'
   import SavedQueries from '../../../pages/SavedQueries.svelte'
   import Settings from '../../../pages/Settings.svelte'
   import Dashboards from '../../../pages/Dashboards.svelte'
-  import Schedules from '../../../pages/Schedules.svelte'
   import BrainPage from '../../../pages/Brain.svelte'
   import Admin from '../../../pages/Admin.svelte'
-  import Governance from '../../../pages/Governance.svelte'
-  import ClusterHealth from '../../../pages/ClusterHealth.svelte'
-  import QueryInsights from '../../../pages/QueryInsights.svelte'
   import Pipelines from '../../../pages/Pipelines.svelte'
   import Telemetry from '../../../pages/Telemetry.svelte'
   import Models from '../../../pages/Models.svelte'
@@ -29,40 +22,6 @@
   let { groupId }: Props = $props()
 
   const activeTab = $derived(getGroupActiveTab(groupId))
-  const proActive = $derived(isProActive())
-  const licenseLoading = $derived(isLicenseLoading())
-  const requiresPro = $derived(!!activeTab && ['schedules', 'governance', 'cluster-health', 'query-insights'].includes(activeTab.type))
-  let licenseChecked = $state(false)
-
-  onMount(() => {
-    void loadLicense().finally(() => {
-      licenseChecked = true
-    })
-  })
-
-  $effect(() => {
-    if (requiresPro && !licenseChecked) {
-      void loadLicense().finally(() => {
-        licenseChecked = true
-      })
-    }
-  })
-
-  function proFeatureLabel(): string {
-    if (!activeTab) return 'this section'
-    switch (activeTab.type) {
-      case 'schedules':
-        return 'Scheduled Jobs'
-      case 'governance':
-        return 'Governance'
-      case 'cluster-health':
-        return 'Cluster Health'
-      case 'query-insights':
-        return 'Query Insights'
-      default:
-        return 'this section'
-    }
-  }
 </script>
 
 <div class="flex-1 min-h-0 overflow-hidden">
@@ -70,14 +29,6 @@
     <div class="flex items-center justify-center h-full text-gray-400 dark:text-gray-600 text-sm">
       Open a query or select a table to get started
     </div>
-  {:else if requiresPro && !proActive}
-    {#if licenseLoading || !licenseChecked}
-      <div class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 text-sm">
-        Checking license...
-      </div>
-    {:else}
-      <ProRequired feature={proFeatureLabel()} />
-    {/if}
   {:else if activeTab.type === 'query'}
     {#key activeTab.id}
       <QueryContent tab={activeTab as QueryTab} />
@@ -100,18 +51,10 @@
     {#key activeTab.id}
       <Dashboards dashboardId={(activeTab as DashboardTab).dashboardId} />
     {/key}
-  {:else if activeTab.type === 'schedules'}
-    <Schedules />
   {:else if activeTab.type === 'brain'}
     <BrainPage />
   {:else if activeTab.type === 'admin'}
     <Admin />
-  {:else if activeTab.type === 'governance'}
-    <Governance />
-  {:else if activeTab.type === 'cluster-health'}
-    <ClusterHealth />
-  {:else if activeTab.type === 'query-insights'}
-    <QueryInsights />
   {:else if activeTab.type === 'pipelines'}
     <Pipelines />
   {:else if activeTab.type === 'telemetry'}
