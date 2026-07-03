@@ -10,7 +10,6 @@ import (
 	connconfig "github.com/caioricciuti/ch-ui/connector/config"
 	"github.com/caioricciuti/ch-ui/connector/ui"
 	"github.com/caioricciuti/ch-ui/internal/database"
-	"github.com/caioricciuti/ch-ui/internal/license"
 )
 
 // EmbeddedAgent manages an in-process tunnel connector that connects

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/caioricciuti/ch-ui/internal/clusterhealth"
 )
 
 // Filters narrow every section's aggregation. All values are sanitized here —

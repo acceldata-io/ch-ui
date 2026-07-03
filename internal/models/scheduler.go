@@ -6,7 +6,6 @@ import (
 
 	"github.com/caioricciuti/ch-ui/internal/database"
 	"github.com/caioricciuti/ch-ui/internal/safe"
-	"github.com/caioricciuti/ch-ui/internal/scheduler"
 )
 
 const modelTickInterval = 30 * time.Second

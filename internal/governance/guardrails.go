@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caioricciuti/ch-ui/internal/alerts"
 	"github.com/caioricciuti/ch-ui/internal/database"
 )
 

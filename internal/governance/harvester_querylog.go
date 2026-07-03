@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caioricciuti/ch-ui/internal/alerts"
 	"github.com/google/uuid"
 )
 

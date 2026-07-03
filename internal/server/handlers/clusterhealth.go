@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caioricciuti/ch-ui/internal/clusterhealth"
+	""
 	"github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/crypto"
 	"github.com/caioricciuti/ch-ui/internal/database"

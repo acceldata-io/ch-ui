@@ -7,7 +7,6 @@ import (
 
 	"github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/database"
-	"github.com/caioricciuti/ch-ui/internal/license"
 )
 
 // LicenseHandler handles license status and activation endpoints.

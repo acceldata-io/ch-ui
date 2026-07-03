@@ -9,7 +9,6 @@ import (
 
 	serverconfig "github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/database"
-	"github.com/caioricciuti/ch-ui/internal/license"
 	"github.com/spf13/cobra"
 )
 

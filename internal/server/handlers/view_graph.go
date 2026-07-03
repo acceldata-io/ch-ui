@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/caioricciuti/ch-ui/internal/crypto"
-	"github.com/caioricciuti/ch-ui/internal/governance"
 	"github.com/caioricciuti/ch-ui/internal/server/middleware"
 	"github.com/google/uuid"
 )

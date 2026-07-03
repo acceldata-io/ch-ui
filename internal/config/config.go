@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/caioricciuti/ch-ui/internal/license"
 	"gopkg.in/yaml.v3"
 )
 
