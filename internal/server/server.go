@@ -333,19 +333,6 @@ func (s *Server) Start() error {
 	s.scheduler.Start()
 	s.pipelineRunner.Start()
 	s.modelScheduler.Start()
-	switch {
-	case !s.cfg.IsPro():
-		slog.Info("Governance background sync disabled (requires Pro license)")
-	case !s.db.GovernanceSyncEnabled():
-		slog.Info("Governance background sync disabled (opt-in required; enable in Governance → Settings)")
-	default:
-		s.govSyncer.StartBackground()
-	}
-	if s.cfg.IsPro() {
-		s.chHarvester.StartBackground()
-	} else {
-		slog.Info("Cluster health harvester disabled (requires Pro license)")
-	}
 	s.alerts.Start()
 
 	if s.cfg.IsPro() {
