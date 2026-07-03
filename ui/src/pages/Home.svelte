@@ -3,7 +3,7 @@
     ArrowUpRight,
     BookOpen,
     Bookmark,
-    Brain,
+    // Brain, // Brain page disabled — uncomment to re-enable Brain
     Home,
     LayoutDashboard,
     Shield,
@@ -59,13 +59,13 @@
       icon: LayoutDashboard,
       run: () => openSingletonTab('dashboards', 'Dashboards'),
     },
-    {
+    /* {
       id: 'brain',
       title: 'Brain',
       description: 'AI assistant for ClickHouse workflows',
       icon: Brain,
       run: () => openSingletonTab('brain', 'Brain'),
-    },
+    }, */ // Brain page disabled — uncomment to re-enable Brain
     {
       id: 'pipelines',
       title: 'Pipelines',
@@ -122,7 +122,7 @@
     }
     if (tab.type === 'saved-queries') openSingletonTab('saved-queries', 'Saved Queries')
     if (tab.type === 'dashboards') openSingletonTab('dashboards', 'Dashboards')
-    if (tab.type === 'brain') openSingletonTab('brain', 'Brain')
+    // if (tab.type === 'brain') openSingletonTab('brain', 'Brain') // Brain page disabled — uncomment to re-enable Brain
     if (tab.type === 'admin') openSingletonTab('admin', 'Admin')
     if (tab.type === 'settings') openSingletonTab('settings', 'Settings')
     if (tab.type === 'pipelines') openSingletonTab('pipelines', 'Pipelines')
@@ -140,7 +140,7 @@
         return 'Dashboard'
       case 'saved-queries':
       case 'dashboards':
-      case 'brain':
+      // case 'brain': // Brain page disabled — uncomment to re-enable Brain
       case 'admin':
       case 'settings':
       case 'pipelines':
@@ -165,7 +165,7 @@
     if (tab.type === 'table' || tab.type === 'database') return Table2
     if (tab.type === 'dashboard' || tab.type === 'dashboards') return LayoutDashboard
     if (tab.type === 'saved-queries') return Bookmark
-    if (tab.type === 'brain') return Brain
+    // if (tab.type === 'brain') return Brain // Brain page disabled — uncomment to re-enable Brain
     if (tab.type === 'pipelines') return Workflow
     if (tab.type === 'admin') return Shield
     return Home

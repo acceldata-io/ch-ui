@@ -1,11 +1,12 @@
 <script lang="ts">
   import { tick, onMount, untrack } from 'svelte'
+  // Brain, MessageSquare, Zap are only used by Brain-page features below — Brain page disabled, uncomment to re-enable Brain
   import {
     Search, Plus, Table2, Sparkles, LayoutDashboard, Bookmark,
-    Brain, Shield, Settings, Moon, Sun, LogOut, SquareTerminal, Home,
+    /* Brain, */ Shield, Settings, Moon, Sun, LogOut, SquareTerminal, Home,
     Workflow, Boxes, Activity, FileText, GitBranch, ChartBar,
-    Network, KeyRound, MessageSquare,
-    Cpu, Info, Hash, Zap,
+    Network, KeyRound, /* MessageSquare, */
+    Cpu, Info, Hash, /* Zap, */
   } from 'lucide-svelte'
   import { closeCommandPalette, isCommandPaletteOpen } from '../../stores/command-palette.svelte'
   import {
@@ -19,11 +20,12 @@
   import { listWorkspaceDashboards, listWorkspaceSavedQueries } from '../../api/workspace'
   import { listModels } from '../../api/models'
   import { listPipelines } from '../../api/pipelines'
-  import { listBrainChats } from '../../api/brain'
+  // Brain page disabled — uncomment to re-enable Brain
+  // import { listBrainChats } from '../../api/brain'
 
   type Group =
     | 'recent' | 'page' | 'table' | 'saved' | 'dashboard'
-    | 'model' | 'pipeline' | 'brainchat' | 'telemetry' | 'action' | 'help'
+    | 'model' | 'pipeline' | /* 'brainchat' | */ 'telemetry' | 'action' | 'help' // 'brainchat' disabled along with Brain page — uncomment to re-enable Brain
 
   interface CommandItem {
     id: string
@@ -45,14 +47,14 @@
     dashboard: 'Dashboards',
     model: 'Models',
     pipeline: 'Pipelines',
-    brainchat: 'Brain chats',
+    // brainchat: 'Brain chats', // Brain page disabled — uncomment to re-enable Brain
     telemetry: 'Telemetry',
     table: 'Tables',
     help: 'Help',
   }
   const GROUP_ORDER: Group[] = [
     'recent', 'help', 'page', 'telemetry',
-    'saved', 'dashboard', 'model', 'pipeline', 'brainchat',
+    'saved', 'dashboard', 'model', 'pipeline', /* 'brainchat', */
     'table', 'action',
   ]
 
@@ -63,7 +65,7 @@
     'd:': 'dashboard',
     'm:': 'model',
     'p:': 'pipeline',
-    'b:': 'brainchat',
+    // 'b:': 'brainchat', // Brain page disabled — uncomment to re-enable Brain
     'tel:': 'telemetry',
     '?': 'help',
   }
@@ -77,7 +79,7 @@
   let dashboards = $state<Array<{ id: string; name: string; description?: string | null }>>([])
   let models = $state<Array<{ id: string; name: string; description?: string | null; target_database?: string }>>([])
   let pipelines = $state<Array<{ id: string; name: string; description?: string | null; status?: string }>>([])
-  let brainChats = $state<Array<{ id: string; title: string }>>([])
+  // let brainChats = $state<Array<{ id: string; title: string }>>([]) // Brain page disabled — uncomment to re-enable Brain
   let recentIds = $state<string[]>([])
   const RECENT_KEY = 'ch-ui-palette-recent'
   const MAX_RECENT = 8
@@ -112,7 +114,7 @@
       mkPage('home', 'Home', Home, () => openHomeTab(), { weight: 10, keywords: 'home start workspace' }),
       mkPage('saved-queries', 'Saved Queries', Bookmark, () => openSingletonTab('saved-queries', 'Saved Queries'), { keywords: 'bookmarks queries history' }),
       mkPage('dashboards', 'Dashboards', LayoutDashboard, () => openSingletonTab('dashboards', 'Dashboards'), { keywords: 'charts panels metrics dash' }),
-      mkPage('brain', 'Brain AI', Brain, () => openSingletonTab('brain', 'Brain'), { keywords: 'ai assistant chat agent llm' }),
+      // mkPage('brain', 'Brain AI', Brain, () => openSingletonTab('brain', 'Brain'), { keywords: 'ai assistant chat agent llm' }), // Brain page disabled — uncomment to re-enable Brain
       mkPage('pipelines', 'Pipelines', Workflow, () => openSingletonTab('pipelines', 'Pipelines'), { keywords: 'ingest etl streams' }),
       mkPage('models', 'Models', Boxes, () => openSingletonTab('models', 'Models'), { keywords: 'dbt models materialize' }),
       mkPage('telemetry', 'Telemetry', Activity, () => openSingletonTab('telemetry', 'Telemetry'), { keywords: 'otel observability logs traces metrics' }),
@@ -147,7 +149,7 @@
       mkAction('new-dashboard', 'New Dashboard', Plus, undefined, () => openSingletonTab('dashboards', 'Dashboards'), 'create dashboard'),
       mkAction('new-model', 'New Model', Plus, undefined, () => openSingletonTab('models', 'Models'), 'create model dbt'),
       mkAction('new-pipeline', 'New Pipeline', Plus, undefined, () => openSingletonTab('pipelines', 'Pipelines'), 'create pipeline'),
-      mkAction('new-brain-chat', 'New Brain Chat', Plus, undefined, () => openSingletonTab('brain', 'Brain'), 'new chat brain ai'),
+      // mkAction('new-brain-chat', 'New Brain Chat', Plus, undefined, () => openSingletonTab('brain', 'Brain'), 'new chat brain ai'), // Brain page disabled — uncomment to re-enable Brain
     )
 
     items.push(
@@ -161,11 +163,12 @@
 
     items.push(
       mkHelp('help-prefixes', 'Prefixes — scope to one kind',
-        '> actions · t: tables · q: saved queries · d: dashboards · m: models · p: pipelines · b: brain chats · tel: telemetry · ? help'),
+        '> actions · t: tables · q: saved queries · d: dashboards · m: models · p: pipelines · /* b: brain chats */ · tel: telemetry · ? help'),
       mkHelp('help-shortcuts', 'Keyboard shortcuts',
         `${cmd}K open palette · ${cmd}⇧N new query · ↑↓ select · Enter run · Esc close`),
-      mkHelp('help-tip-brain', 'Type a question — Brain answers it',
-        'End your query with "?" and hit Enter to seed a Brain chat with the prompt.'),
+      // mkHelp('help-tip-brain', 'Type a question — Brain answers it',
+      //   'End your query with "?" and hit Enter to seed a Brain chat with the prompt.'),
+      // Brain page disabled — uncomment to re-enable Brain
     )
 
     return items
@@ -237,6 +240,7 @@
       })
     }
 
+    /* Brain page disabled — uncomment to re-enable Brain
     for (const c of brainChats) {
       items.push({
         id: `chat-${c.id}`,
@@ -247,6 +251,7 @@
         run: () => openSingletonTab('brain', 'Brain'),
       })
     }
+    */
 
     return items
   })
@@ -284,9 +289,9 @@
           ? Table2
           : tab.type === 'dashboard'
             ? LayoutDashboard
-            : tab.type === 'brain'
-              ? Brain
-              : tab.type === 'telemetry'
+            // : tab.type === 'brain' // Brain page disabled — uncomment to re-enable Brain
+            //   ? Brain
+            : tab.type === 'telemetry'
                 ? Activity
                 : Sparkles
       items.push({
@@ -315,7 +320,8 @@
     return { scope: null, term: query.trim() }
   })
 
-  const brainSuggestion = $derived.by<CommandItem | null>(() => {
+  // Brain page disabled — uncomment to re-enable Brain
+  /* const brainSuggestion = $derived.by<CommandItem | null>(() => {
     const t = parsed.term.trim()
     if (parsed.scope) return null
     if (!t) return null
@@ -339,7 +345,8 @@
         openSingletonTab('brain', 'Brain')
       },
     }
-  })
+  }) */
+  const brainSuggestion = null
 
   type Grouped = Array<{ group: Group; items: Array<{ item: CommandItem; score: number }> }>
 
@@ -364,7 +371,8 @@
     if (inputEmpty) {
       const recentOnly = ranked.filter(x => x.item.group === 'recent').slice(0, 5)
       const curatedIds = new Set([
-        'page-home', 'act-new-query', 'page-telemetry', 'page-brain',
+        'page-home', 'act-new-query', 'page-telemetry',
+        // 'page-brain', // Brain page disabled — uncomment to re-enable Brain
         'page-saved-queries', 'page-dashboards',
       ])
       const curated = ranked.filter(x => curatedIds.has(x.item.id))
@@ -422,13 +430,13 @@
       listWorkspaceDashboards().catch(() => []),
       listModels().then(r => r.models ?? []).catch(() => []),
       listPipelines().then(r => r.pipelines ?? []).catch(() => []),
-      listBrainChats(false).catch(() => []),
+      // listBrainChats(false).catch(() => []), // Brain page disabled — uncomment to re-enable Brain
     ])
     if (results[0].status === 'fulfilled') savedQueries = results[0].value
     if (results[1].status === 'fulfilled') dashboards = results[1].value
     if (results[2].status === 'fulfilled') models = results[2].value
     if (results[3].status === 'fulfilled') pipelines = results[3].value
-    if (results[4].status === 'fulfilled') brainChats = results[4].value
+    // if (results[4].status === 'fulfilled') brainChats = results[4].value // Brain page disabled — uncomment to re-enable Brain
   }
 
   function persistRecent(id: string) {

@@ -3,6 +3,8 @@
   import type { AdminStats } from '../lib/types/api'
   import { apiGet, apiPut, apiDel, apiPost } from '../lib/api/client'
   import { fetchClusterInfo, fetchNodeInfo } from '../lib/api/query'
+  // Brain admin disabled — uncomment to re-enable Brain
+  /*
   import type { BrainModelOption, BrainProviderAdmin, BrainSkill } from '../lib/types/brain'
   import {
     adminBulkUpdateBrainModels,
@@ -17,6 +19,7 @@
     adminUpdateBrainProvider,
     adminUpdateBrainSkill,
   } from '../lib/api/brain'
+  */
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
   import Spinner from '../lib/components/common/Spinner.svelte'
   import Combobox from '../lib/components/common/Combobox.svelte'
@@ -30,8 +33,9 @@
   import type { GitHubIntegration, GitHubSyncLog } from '../lib/types/models'
 
   // Tab state
-  type AdminTab = 'overview' | 'tunnels' | 'users' | 'brain' | 'github'
-  const adminTabIds: AdminTab[] = ['overview', 'tunnels', 'users', 'brain', 'github']
+  // 'brain' tab disabled along with Brain page — uncomment to re-enable Brain
+  type AdminTab = 'overview' | 'tunnels' | 'users' | /* 'brain' | */ 'github'
+  const adminTabIds: AdminTab[] = ['overview', 'tunnels', 'users', /* 'brain', */ 'github']
   let activeTab = $state<AdminTab>('overview')
 
   type TunnelConnection = {
@@ -113,8 +117,8 @@
     password: '',
     ifExists: true,
   })
-
-  // Brain admin
+  // Brain admin disabled — uncomment along with imports above to re-enable
+  /*
   let brainLoading = $state(false)
   let brainProviders = $state<BrainProviderAdmin[]>([])
   let brainModels = $state<BrainModelOption[]>([])
@@ -125,6 +129,7 @@
   let providerSheetOpen = $state(false)
   let skillSheetOpen = $state(false)
   let deletingProvider = $state<BrainProviderAdmin | null>(null)
+  */
 
   const roleOptions: ComboboxOption[] = [
     { value: 'admin', label: 'admin' },
@@ -132,6 +137,8 @@
     { value: 'viewer', label: 'viewer' },
   ]
 
+  // Uncomment to re-enable Brain
+  /*
   const providerKindOptions: ComboboxOption[] = [
     { value: 'openai', label: 'OpenAI' },
     { value: 'openai_compatible', label: 'OpenAI Compatible' },
@@ -147,12 +154,15 @@
     openai_compatible: '',
     ollama: 'http://localhost:11434',
   }
+  */
+
   const clickHouseAuthTypeOptions: ComboboxOption[] = [
     { value: 'sha256_password', label: 'sha256_password' },
     { value: 'plaintext_password', label: 'plaintext_password' },
     { value: 'double_sha1_password', label: 'double_sha1_password' },
     { value: 'no_password', label: 'no_password' },
   ]
+  /*
   let providerForm = $state({
     name: '',
     kind: 'openai',
@@ -169,6 +179,7 @@
     isActive: true,
     isDefault: true,
   })
+  */
 
   // GitHub integration state
   let ghIntegration = $state<GitHubIntegration | null>(null)
@@ -675,14 +686,17 @@
     if (tab === 'users' && users.length === 0) {
       refreshUsersTab()
     }
-    if (tab === 'brain' && !brainLoading && brainProviders.length === 0 && brainSkills.length === 0) {
-      loadBrainAdmin()
-    }
+    // Brain admin disabled — uncomment to re-enable Brain
+    // if (tab === 'brain' && !brainLoading && brainProviders.length === 0 && brainSkills.length === 0) {
+    //   loadBrainAdmin()
+    // }
     if (tab === 'github' && !ghLoading && !ghIntegration) {
       loadGitHubTab()
     }
   }
 
+// Brain admin disabled — uncomment to re-enable Brain
+/*
   async function loadBrainAdmin() {
     brainLoading = true
     try {
@@ -885,6 +899,7 @@
     }
     skillSheetOpen = true
   }
+  */
 
   async function setRole(username: string, role: string) {
     if (!username || roleSavingUser === username) return
@@ -932,7 +947,8 @@
         <h1 class="ds-page-title">Admin Panel</h1>
       </div>
       <nav class="ds-tabs border-0 px-0 pt-0 gap-1 overflow-x-auto whitespace-nowrap" aria-label="Admin Tabs">
-        {#each [['overview', 'Overview'], ['tunnels', 'Tunnels'], ['users', 'Users'], ['brain', 'Brain'], ['github', 'GitHub']] as [key, label]}
+        <!-- Brain admin disabled — uncomment to re-enable Brain -->
+        {#each [['overview', 'Overview'], ['tunnels', 'Tunnels'], ['users', 'Users'], /* ['brain', 'Brain'], */ ['github', 'GitHub']] as [key, label]}
           <button
             class="ds-tab {activeTab === key ? 'ds-tab-active' : ''}"
             onclick={() => switchTab(key as AdminTab)}
@@ -944,6 +960,7 @@
 </div>
 </div>
 
+<!-- Brain admin sheets disabled — uncomment along with imports/state/functions above to re-enable Brain
 <Sheet
   open={providerSheetOpen}
   title="Add AI Provider"
@@ -957,7 +974,7 @@
       void createProvider()
     }}
   >
-    <!-- Kind selection -->
+    Kind selection:
     <div>
       <span class="ds-form-label">Provider Type</span>
       <div class="grid grid-cols-3 gap-2 mt-1">
@@ -976,7 +993,7 @@
       </div>
     </div>
 
-    <!-- Connection details -->
+    Connection details:
     <div class="space-y-3">
       <label class="block space-y-1">
         <span class="ds-form-label">Display Name</span>
@@ -1009,7 +1026,7 @@
       {/if}
     </div>
 
-    <!-- Options -->
+    // Options
     <div class="flex items-center gap-5 pt-1">
       <label class="ds-checkbox-label text-xs">
         <input type="checkbox" class="ds-checkbox" bind:checked={providerForm.isActive} />
@@ -1021,14 +1038,14 @@
       </label>
     </div>
 
-    <!-- Error -->
+    // Error
     {#if providerError}
       <div class="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
         <p class="text-xs font-medium text-red-700 dark:text-red-300">{providerError}</p>
       </div>
     {/if}
 
-    <!-- Actions -->
+    // Actions
     <div class="flex items-center justify-end gap-2 pt-3 border-t border-gray-200 dark:border-gray-800">
       <button type="button" class="ds-btn-outline" onclick={() => { providerSheetOpen = false; resetProviderForm() }}>Cancel</button>
       <button type="submit" class="ds-btn-primary" disabled={!providerForm.name.trim() || providerCreating}>
@@ -1087,6 +1104,7 @@
     </div>
   </form>
 </Sheet>
+-->
 
 <Sheet
   open={createCHUserSheetOpen}
@@ -1240,6 +1258,7 @@
   oncancel={cancelDeleteTunnel}
 />
 
+<!-- Brain admin delete-provider dialog disabled — uncomment to re-enable Brain
 <ConfirmDialog
   open={deletingProvider !== null}
   title="Delete provider?"
@@ -1249,6 +1268,7 @@
   onconfirm={confirmDeleteProvider}
   oncancel={() => deletingProvider = null}
 />
+-->
 
   <!-- Content -->
   <div class="flex-1 overflow-auto p-4">
@@ -1615,11 +1635,12 @@
         {/if}
       {/if}
 
+    <!-- Brain admin tab content disabled — uncomment along with imports/state/functions/sheets above to re-enable Brain
     {:else if activeTab === 'brain'}
       {#if brainLoading}
         <div class="flex items-center justify-center py-12"><Spinner /></div>
       {:else}
-        <!-- Header -->
+        // Header
         <div class="flex flex-col gap-1 mb-6">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2.5">
@@ -1639,7 +1660,7 @@
           </div>
         </div>
 
-        <!-- Stats -->
+        // Stats
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
           <div class="ds-stat-card">
             <div class="flex items-center gap-2 text-gray-500 text-xs mb-1">
@@ -1673,7 +1694,7 @@
           </div>
         </div>
 
-        <!-- Providers Section -->
+        // Providers Section
         <div class="mb-8">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Providers</h3>
@@ -1753,7 +1774,7 @@
           {/if}
         </div>
 
-        <!-- Models Section -->
+        // Models Section
         <div class="mb-8">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2">
@@ -1851,7 +1872,7 @@
           {/if}
         </div>
 
-        <!-- System Prompt Section -->
+        // System Prompt Section
         <div>
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2">
@@ -1875,6 +1896,7 @@
           </div>
         </div>
       {/if}
+    -->
 
     {:else if activeTab === 'github'}
       {#if ghLoading}

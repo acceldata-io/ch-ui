@@ -7,7 +7,7 @@
   import SavedQueries from '../../../pages/SavedQueries.svelte'
   import Settings from '../../../pages/Settings.svelte'
   import Dashboards from '../../../pages/Dashboards.svelte'
-  import BrainPage from '../../../pages/Brain.svelte'
+  // import BrainPage from '../../../pages/Brain.svelte' // Brain page disabled — uncomment to re-enable Brain
   import Admin from '../../../pages/Admin.svelte'
   import Pipelines from '../../../pages/Pipelines.svelte'
   import Telemetry from '../../../pages/Telemetry.svelte'
@@ -51,8 +51,10 @@
     {#key activeTab.id}
       <Dashboards dashboardId={(activeTab as DashboardTab).dashboardId} />
     {/key}
+  <!-- Brain page disabled — uncomment to re-enable Brain
   {:else if activeTab.type === 'brain'}
     <BrainPage />
+  -->
   {:else if activeTab.type === 'admin'}
     <Admin />
   {:else if activeTab.type === 'pipelines'}

@@ -8,7 +8,7 @@ const TAB_PATHS: Record<string, string> = {
   'home': '/',
   'saved-queries': '/saved-queries',
   'dashboards': '/dashboards',
-  'brain': '/brain',
+  // 'brain': '/brain', // Brain page disabled — uncomment to re-enable Brain
   'admin': '/admin',
   'pipelines': '/pipelines',
   'models': '/models',
@@ -20,7 +20,7 @@ const TAB_PATHS: Record<string, string> = {
 const PATH_TABS: Record<string, { type: SingletonTab['type']; label: string }> = {
   '/saved-queries': { type: 'saved-queries', label: 'Saved Queries' },
   '/dashboards': { type: 'dashboards', label: 'Dashboards' },
-  '/brain': { type: 'brain', label: 'Brain' },
+  // '/brain': { type: 'brain', label: 'Brain' }, // Brain page disabled — uncomment to re-enable Brain
   '/admin': { type: 'admin', label: 'Admin' },
   '/pipelines': { type: 'pipelines', label: 'Pipelines' },
   '/models': { type: 'models', label: 'Models' },

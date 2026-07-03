@@ -22,7 +22,7 @@
     Table2,
     Bookmark,
     LayoutDashboard,
-    Brain,
+    // Brain, // Brain page disabled — uncomment to re-enable Brain
     Shield,
     Settings,
     Columns2,
@@ -70,7 +70,7 @@
     'dashboard': LayoutDashboard,
     'saved-queries': Bookmark,
     'dashboards': LayoutDashboard,
-    'brain': Brain,
+    // 'brain': Brain, // Brain page disabled — uncomment to re-enable Brain
     'admin': Shield,
     'pipelines': Workflow,
     'telemetry': Activity,
