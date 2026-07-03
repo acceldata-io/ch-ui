@@ -11,7 +11,7 @@ LDFLAGS = -s -w \
 
 BINARY = ch-ui
 
-.PHONY: app build rebuild from-scratch build-frontend build-go dev test clean tidy vet help
+.PHONY: app build rebuild from-scratch build-frontend build-go wrapper dev test clean tidy vet help
 
 ## app: Build frontend + Go binary (production-ready)
 app: build-frontend build-go
@@ -37,6 +37,10 @@ build-frontend:
 ## build-go: Build just the Go binary (skip frontend rebuild)
 build-go:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+
+## wrapper: Build the Go binary, then package the self-contained ch-ui-wrapper jar (embeds the binary)
+wrapper: build-go
+	cd ch-ui-wrapper && mvn -q -DskipTests package
 
 ## dev: Start the server in dev mode (expects Vite running on :5173)
 dev:

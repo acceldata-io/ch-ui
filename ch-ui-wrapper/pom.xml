@@ -45,6 +45,38 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <!--
+              Embeds the compiled Go ch-ui binary (built by `make build-go` at the repo
+              root) into the jar so the jar alone is enough to run the server, with no
+              separate binary to ship alongside it. Copies from ../ch-ui into
+              target/classes/native/ch-ui before the jar is assembled. If the binary
+              hasn't been built yet, this copies nothing and the wrapper falls back to
+              the externally configured chui.binaryPath (see ChUiProcessLauncher).
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>embed-ch-ui-binary</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/native</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/..</directory>
+                                    <includes>
+                                        <include>ch-ui</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
         <resources>
             <resource>
