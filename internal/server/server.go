@@ -14,6 +14,7 @@ import (
 	"github.com/caioricciuti/ch-ui/internal/clusterhealth"
 	"github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/database"
+	"github.com/caioricciuti/ch-ui/internal/embedded"
 	ghclient "github.com/caioricciuti/ch-ui/internal/github"
 	"github.com/caioricciuti/ch-ui/internal/governance"
 	"github.com/caioricciuti/ch-ui/internal/models"
@@ -41,14 +42,15 @@ type Server struct {
 	guardrails     *governance.GuardrailService
 	alerts         *alerts.Dispatcher
 	auditFwd       *audit.Forwarder
-	oidcProvider   *oidc.Provider
+	oidcManager    *oidc.Manager
+	agents         *embedded.Manager
 	router         chi.Router
 	http           *http.Server
 	frontendFS     fs.FS
 }
 
 // New creates a new Server with all routes configured.
-func New(cfg *config.Config, db *database.DB, frontendFS fs.FS) *Server {
+func New(cfg *config.Config, db *database.DB, frontendFS fs.FS, agents *embedded.Manager) *Server {
 	r := chi.NewRouter()
 	gw := tunnel.NewGateway(db)
 
@@ -63,19 +65,20 @@ func New(cfg *config.Config, db *database.DB, frontendFS fs.FS) *Server {
 	githubSyncer := ghclient.NewSyncer(db, cfg.AppSecretKey)
 	alertDispatcher := alerts.NewDispatcher(db, cfg)
 
-	// Initialize OIDC SSO if configured. Discovery hits the network, so bound it
+	// Initialize OIDC SSO if configured — via env/YAML (which always wins) or
+	// via the admin-managed DB config. Discovery hits the network, so bound it
 	// with a timeout; on failure we log and continue with OIDC disabled rather
-	// than refusing to start.
-	var oidcProvider *oidc.Provider
-	if cfg.OIDCEnabled() {
+	// than refusing to start. The manager lets the admin SSO settings endpoint
+	// re-initialize the provider at runtime without a restart.
+	oidcManager := oidc.NewManager()
+	if settings, ok := handlers.ResolveOIDCSettings(cfg, db); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		p, err := oidc.New(ctx, cfg)
+		err := oidcManager.Reload(ctx, settings)
 		cancel()
 		if err != nil {
-			slog.Error("OIDC SSO disabled — provider discovery failed", "issuer", cfg.OIDCIssuerURL, "error", err)
+			slog.Error("OIDC SSO disabled — provider discovery failed", "issuer", settings.IssuerURL, "source", settings.Source, "error", err)
 		} else {
-			oidcProvider = p
-			slog.Info("OIDC SSO enabled", "issuer", cfg.OIDCIssuerURL)
+			slog.Info("OIDC SSO enabled", "issuer", settings.IssuerURL, "source", settings.Source)
 		}
 	}
 
@@ -113,7 +116,8 @@ func New(cfg *config.Config, db *database.DB, frontendFS fs.FS) *Server {
 		guardrails:     governance.NewGuardrailService(govStore, db),
 		alerts:         alertDispatcher,
 		auditFwd:       auditFwd,
-		oidcProvider:   oidcProvider,
+		oidcManager:    oidcManager,
+		agents:         agents,
 		router:         r,
 		frontendFS:     frontendFS,
 	}
@@ -176,7 +180,7 @@ func (s *Server) setupRoutes() {
 			Gateway:     gw,
 			RateLimiter: rateLimiter,
 			Config:      cfg,
-			OIDC:        s.oidcProvider,
+			OIDC:        s.oidcManager,
 		}
 		api.Route("/auth", authHandler.Routes)
 
@@ -205,7 +209,7 @@ func (s *Server) setupRoutes() {
 			// authenticated user, but mutating a connection or revealing/rotating
 			// its tunnel token — the credential an agent uses to bridge into the
 			// customer's ClickHouse network — requires admin.
-			connectionsHandler := &handlers.ConnectionsHandler{DB: db, Gateway: gw, Config: cfg}
+			connectionsHandler := &handlers.ConnectionsHandler{DB: db, Gateway: gw, Config: cfg, Agents: s.agents}
 			protected.Route("/connections", func(cr chi.Router) {
 				cr.Get("/", connectionsHandler.List)
 				cr.Get("/{id}", connectionsHandler.Get)
@@ -214,6 +218,7 @@ func (s *Server) setupRoutes() {
 				cr.Group(func(ar chi.Router) {
 					ar.Use(middleware.RequireAdmin(db))
 					ar.Post("/", connectionsHandler.Create)
+					ar.Put("/{id}", connectionsHandler.Update)
 					ar.Delete("/{id}", connectionsHandler.Delete)
 					ar.Get("/{id}/token", connectionsHandler.GetToken)
 					ar.Post("/{id}/regenerate-token", connectionsHandler.RegenerateToken)
@@ -257,6 +262,7 @@ func (s *Server) setupRoutes() {
 				Config:       cfg,
 				GovSyncer:    s.govSyncer,
 				GitHubSyncer: s.githubSyncer,
+				OIDCManager:  s.oidcManager,
 			}
 			protected.Route("/admin", func(ar chi.Router) {
 				adminHandler.Routes(ar)
@@ -330,6 +336,8 @@ func (s *Server) setupRoutes() {
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
+	s.db.StartCleanupJobs()
+	s.db.StartRetentionJob()
 	s.scheduler.Start()
 	s.pipelineRunner.Start()
 	s.modelScheduler.Start()

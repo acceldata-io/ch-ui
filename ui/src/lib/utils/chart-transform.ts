@@ -1,5 +1,6 @@
 import type { PanelConfig, StatThreshold } from '../types/api'
 import type uPlot from 'uplot'
+import { formatBytes } from './format'
 
 export interface ColumnMeta {
   name: string
@@ -200,15 +201,6 @@ function formatShort(n: number, decimals?: number): string {
   if (tier >= SI_SUFFIXES.length) tier = SI_SUFFIXES.length - 1
   const scaled = n / Math.pow(1000, tier)
   return formatWithDecimals(scaled, decimals ?? 1) + SI_SUFFIXES[tier]
-}
-
-function formatBytes(n: number, decimals?: number): string {
-  if (n === 0) return '0 B'
-  const abs = Math.abs(n)
-  let tier = Math.floor(Math.log2(abs) / 10)
-  if (tier >= BYTE_SUFFIXES.length) tier = BYTE_SUFFIXES.length - 1
-  const scaled = n / Math.pow(1024, tier)
-  return formatWithDecimals(scaled, decimals ?? 1) + ' ' + BYTE_SUFFIXES[tier]
 }
 
 function formatBps(n: number, decimals?: number): string {

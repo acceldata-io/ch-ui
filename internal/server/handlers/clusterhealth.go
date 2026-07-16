@@ -74,7 +74,7 @@ func (h *ClusterHealthHandler) session(w http.ResponseWriter, r *http.Request) (
 		return chSession{}, false
 	}
 	if !h.Gateway.IsTunnelOnline(sess.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return chSession{}, false
 	}
 	password, err := crypto.Decrypt(sess.EncryptedPassword, h.Config.AppSecretKey)
@@ -149,7 +149,7 @@ func (h *ClusterHealthHandler) liveHandler(build func(cluster string) string, so
 				return
 			}
 			slog.Warn("Cluster health query failed", "error", err, "connection", cs.connID)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		if rows == nil {
@@ -182,7 +182,7 @@ func (h *ClusterHealthHandler) getLongQueries(w http.ResponseWriter, r *http.Req
 	}
 	if err != nil {
 		slog.Warn("Cluster health long-queries failed", "error", err, "connection", cs.connID)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if rows == nil {

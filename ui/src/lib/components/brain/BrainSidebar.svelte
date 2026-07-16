@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BrainChat } from '../../types/brain'
+  import { formatRelativeTime } from '../../utils/format'
   import Spinner from '../common/Spinner.svelte'
   import { Plus, Search, Edit3, Trash2 } from 'lucide-svelte'
 
@@ -23,21 +24,6 @@
     return chats.filter(c => c.title.toLowerCase().includes(term))
   })
 
-  function formatTime(ts?: string | null): string {
-    if (!ts) return ''
-    try {
-      const d = new Date(ts)
-      const now = new Date()
-      const diff = now.getTime() - d.getTime()
-      if (diff < 60_000) return 'just now'
-      if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
-      if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
-      if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`
-      return d.toLocaleDateString()
-    } catch {
-      return ts
-    }
-  }
 </script>
 
 <aside class="w-72 border-r border-gray-200 dark:border-gray-800 flex flex-col">
@@ -74,7 +60,7 @@
         >
           <div class="text-sm text-gray-800 dark:text-gray-200 truncate font-medium">{chat.title}</div>
           <div class="flex items-center justify-between mt-1">
-            <span class="text-[11px] text-gray-500">{formatTime(chat.last_message_at ?? chat.updated_at)}</span>
+            <span class="text-[11px] text-gray-500">{formatRelativeTime(chat.last_message_at ?? chat.updated_at)}</span>
             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 class="p-0.5 text-gray-400 hover:text-ch-blue rounded transition-colors"

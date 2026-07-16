@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/caioricciuti/ch-ui/internal/alerts"
+	"github.com/caioricciuti/ch-ui/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -23,10 +24,37 @@ const queryLogBatchLimit = 5000
 const defaultQueryLogWatermark = "2000-01-01 00:00:00"
 
 // syncQueryLog harvests recent queries from system.query_log, classifies them,
-// extracts lineage, and evaluates access policies.
+// and evaluates access policies.
+//
+// Harvesting is gated by the query_harvest_mode governance setting: "off"
+// skips entirely, "auto" (default) harvests only when at least one policy
+// exists for the connection, "always" harvests unconditionally.
 func (s *Syncer) syncQueryLog(ctx context.Context, creds CHCredentials) (*QueryLogSyncResult, error) {
 	connID := creds.ConnectionID
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	skipHarvest := false
+	switch mode := s.db.QueryHarvestMode(); mode {
+	case database.QueryHarvestModeOff:
+		skipHarvest = true
+		slog.Debug("Query log harvest skipped: harvesting disabled", "connection", connID)
+	case database.QueryHarvestModeAuto:
+		policies, err := s.store.GetPolicies(connID)
+		if err != nil {
+			slog.Warn("Query log harvest: failed to load policies for auto mode", "connection", connID, "error", err)
+		} else if len(policies) == 0 {
+			skipHarvest = true
+			slog.Debug("Query log harvest skipped: auto mode with no policies", "connection", connID)
+		}
+	}
+	if skipHarvest {
+		// Mark the state as freshly synced (keeping the stored watermark) so
+		// the background staleness check does not retrigger syncs every tick.
+		if err := s.store.UpsertSyncState(connID, string(SyncQueryLog), "idle", nil, nil, 0); err != nil {
+			slog.Error("Failed to update sync state for skipped query log harvest", "error", err)
+		}
+		return &QueryLogSyncResult{}, nil
+	}
 
 	// Update sync state to running
 	if err := s.store.UpsertSyncState(connID, string(SyncQueryLog), "running", nil, nil, 0); err != nil {
@@ -190,33 +218,6 @@ func (s *Syncer) syncQueryLog(ctx context.Context, creds CHCredentials) (*QueryL
 		result.NewWatermark = watermark
 	}
 
-	// Extract lineage (table + column level) from each entry
-	lineageCount := 0
-	for _, entry := range entries {
-		results := ExtractLineageWithColumns(connID, entry)
-		for _, lr := range results {
-			if err := s.store.InsertLineageEdge(lr.Edge); err != nil {
-				slog.Error("Failed to insert lineage edge", "error", err)
-				continue
-			}
-			lineageCount++
-			// Insert column-level mappings
-			for _, cm := range lr.ColumnMappings {
-				colEdge := ColumnLineageEdge{
-					ID:            uuid.New().String(),
-					LineageEdgeID: lr.Edge.ID,
-					ConnectionID:  connID,
-					SourceColumn:  cm.SourceColumn,
-					TargetColumn:  cm.TargetColumn,
-				}
-				if err := s.store.InsertColumnLineageEdge(colEdge); err != nil {
-					slog.Error("Failed to insert column lineage edge", "error", err)
-				}
-			}
-		}
-	}
-	result.LineageEdgesFound = lineageCount
-
 	// Evaluate policies against each entry
 	violationCount := 0
 	policies, err := s.store.GetPolicies(connID)
@@ -284,7 +285,6 @@ func (s *Syncer) syncQueryLog(ctx context.Context, creds CHCredentials) (*QueryL
 	slog.Info("Query log sync completed",
 		"connection", connID,
 		"ingested", result.QueriesIngested,
-		"lineage_edges", result.LineageEdgesFound,
 		"violations", result.ViolationsFound,
 		"new_watermark", result.NewWatermark,
 	)

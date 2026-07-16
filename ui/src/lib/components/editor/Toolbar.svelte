@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from '../common/Button.svelte'
-  import { Play, Square, AlignLeft, BookOpen, Save, Zap, Braces, History } from 'lucide-svelte'
+  import { Play, Square, AlignLeft, BookOpen, Save, Zap, Braces, History, Sparkles } from 'lucide-svelte'
   import type { QueryEstimateResult } from '../../types/query'
   import { formatNumber } from '../../utils/format'
 
@@ -10,6 +10,9 @@
     oncancel?: () => void
     onformat?: () => void
     onexplain?: () => void
+    onask?: () => void
+    askActive?: boolean
+    askPro?: boolean
     onsave?: () => void
     onparams?: () => void
     onhistory?: () => void
@@ -19,7 +22,7 @@
     estimateLoading?: boolean
   }
 
-  let { running = false, onrun, oncancel, onformat, onexplain, onsave, onparams, onhistory, paramCount = 0, paramsActive = false, estimate = null, estimateLoading = false }: Props = $props()
+  let { running = false, onrun, oncancel, onformat, onexplain, onask, askActive = false, askPro = true, onsave, onparams, onhistory, paramCount = 0, paramsActive = false, estimate = null, estimateLoading = false }: Props = $props()
 
   const estimateLabel = $derived.by(() => {
     if (estimateLoading) return 'Estimating...'
@@ -55,6 +58,16 @@
     <Button size="sm" variant="ghost" onclick={onexplain}>
       <BookOpen size={14} />
       Explain
+    </Button>
+  {/if}
+
+  {#if onask}
+    <Button size="sm" variant={askActive ? 'secondary' : 'ghost'} onclick={onask}>
+      <Sparkles size={14} class="text-ch-orange" />
+      Ask AI
+      {#if !askPro}
+        <span class="ml-1 text-[10px] uppercase tracking-wider text-ch-orange font-semibold">Pro</span>
+      {/if}
     </Button>
   {/if}
 

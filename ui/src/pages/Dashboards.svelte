@@ -4,6 +4,7 @@
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
   import { openDashboardTab, openSingletonTab } from '../lib/stores/tabs.svelte'
   import { toDashboardTimeRangePayload } from '../lib/utils/dashboard-time'
+  import { formatDate } from '../lib/utils/format'
   import Button from '../lib/components/common/Button.svelte'
   import Spinner from '../lib/components/common/Spinner.svelte'
   import Sheet from '../lib/components/common/Sheet.svelte'
@@ -382,13 +383,6 @@
     }
   }
 
-  function formatTime(ts: string): string {
-    try {
-      return new Date(ts).toLocaleString()
-    } catch {
-      return ts
-    }
-  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -439,7 +433,7 @@
               </div>
               <div class="flex items-center gap-3 mt-3 text-xs text-gray-400">
                 <span>by {dashboard.created_by}</span>
-                <span>{formatTime(dashboard.updated_at)}</span>
+                <span>{formatDate(dashboard.updated_at)}</span>
               </div>
             </div>
           {/each}

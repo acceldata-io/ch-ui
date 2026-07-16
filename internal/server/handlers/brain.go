@@ -157,6 +157,7 @@ func (h *BrainHandler) signalApproval(id string, decision approvalDecision) bool
 
 func (h *BrainHandler) Routes(r chi.Router) {
 	r.Get("/models", h.ListModels)
+	r.Post("/generate-sql", h.GenerateSQL) // Pro: text-to-SQL grounded in live schema
 	r.Get("/skills", h.GetSkill)
 	r.Get("/chats", h.ListChats)
 	r.Post("/chats", h.CreateChat)
@@ -172,9 +173,6 @@ func (h *BrainHandler) Routes(r chi.Router) {
 	r.Post("/approvals/{approvalID}/approve", h.ApprovePendingAction)
 	r.Post("/approvals/{approvalID}/decline", h.DeclinePendingAction)
 	r.Get("/audit", h.ListAudit)
-
-	// Legacy endpoint kept for compatibility with older UI.
-	r.Post("/chat", h.LegacyChat)
 }
 
 func (h *BrainHandler) workspaceOrigin(r *http.Request) string {
@@ -1300,94 +1298,6 @@ func (h *BrainHandler) streamMessageCommunity(
 	})
 
 	_ = writeSSE(w, flusher, map[string]interface{}{"type": "done", "messageId": assistantMessageID, "chatId": chatID})
-}
-
-func (h *BrainHandler) LegacyChat(w http.ResponseWriter, r *http.Request) {
-	session := middleware.GetSession(r)
-	if session == nil {
-		writeError(w, http.StatusUnauthorized, "Not authenticated")
-		return
-	}
-
-	var req struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		SchemaContext *schemaContext `json:"schemaContext,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-	if len(req.Messages) == 0 {
-		writeError(w, http.StatusBadRequest, "Messages are required")
-		return
-	}
-
-	rt, err := h.DB.GetDefaultBrainModelRuntime()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to resolve model")
-		return
-	}
-	if rt == nil {
-		writeError(w, http.StatusBadRequest, "No active AI model configured by admin")
-		return
-	}
-
-	provider, err := braincore.NewProvider(rt.ProviderKind)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cfg := braincore.ProviderConfig{Kind: rt.ProviderKind}
-	if rt.ProviderBaseURL != nil {
-		cfg.BaseURL = *rt.ProviderBaseURL
-	}
-	if rt.ProviderEncryptedKey != nil {
-		decrypted, decErr := crypto.Decrypt(*rt.ProviderEncryptedKey, h.Config.AppSecretKey)
-		if decErr != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to decrypt provider API key")
-			return
-		}
-		cfg.APIKey = decrypted
-	}
-
-	var legacyContexts []schemaContext
-	if req.SchemaContext != nil {
-		legacyContexts = append(legacyContexts, *req.SchemaContext)
-	}
-	messages := make([]braincore.Message, 0, len(req.Messages)+1)
-	messages = append(messages, braincore.Message{Role: "system", Content: h.buildSystemPrompt(legacyContexts, nil, false)})
-	for _, msg := range req.Messages {
-		role := strings.ToLower(strings.TrimSpace(msg.Role))
-		if role != "user" && role != "assistant" {
-			continue
-		}
-		messages = append(messages, braincore.Message{Role: role, Content: msg.Content})
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "Streaming not supported")
-		return
-	}
-
-	_, streamErr := provider.StreamChat(r.Context(), cfg, rt.ModelName, messages, func(delta string) error {
-		return writeSSE(w, flusher, map[string]interface{}{"type": "delta", "delta": delta})
-	})
-
-	if streamErr != nil {
-		_ = writeSSE(w, flusher, map[string]interface{}{"type": "error", "error": streamErr.Error()})
-		return
-	}
-
-	_ = writeSSE(w, flusher, map[string]interface{}{"type": "done"})
 }
 
 func (h *BrainHandler) resolveRuntimeModel(chat *database.BrainChat, requestedModelID string) (*database.BrainModelRuntime, error) {

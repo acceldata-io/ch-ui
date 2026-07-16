@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import type { PipelineStatus } from '../../types/pipelines'
   import * as api from '../../api/pipelines'
+  import { formatBytes, formatNumber } from '../../utils/format'
   import { Activity, Rows3, HardDrive, AlertTriangle, Timer } from 'lucide-svelte'
 
   interface Props {
@@ -59,18 +60,6 @@
     }
   }
 
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B'
-    const units = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(1024))
-    return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`
-  }
-
-  function formatNumber(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-    return n.toString()
-  }
 </script>
 
 {#if isRunning || rowsIngested > 0}

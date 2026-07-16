@@ -59,15 +59,11 @@ func (h *GovernanceHandler) Routes() chi.Router {
 
 	// Query Log
 	r.Get("/query-log", h.ListQueryLog)
-	r.Get("/query-log/top", h.TopQueries)
 	r.Get("/query-log/{query_id}", h.GetQueryByQueryID)
 
-	// Lineage
-	r.Get("/lineage", h.GetLineage)
-	r.Get("/lineage/graph", h.GetLineageGraph)
-
-	// View dependency graph (structural lineage from MV/View definitions)
-	r.Get("/view-graph", h.GetViewGraph)
+	// Query harvest settings (conditional system.query_log harvesting)
+	r.Get("/query-harvest", h.GetQueryHarvestSettings)
+	r.With(middleware.RequireAdmin(h.DB)).Put("/query-harvest", h.UpdateQueryHarvestSettings)
 
 	// Tags
 	r.Get("/tags", h.ListTags)
@@ -109,9 +105,6 @@ func (h *GovernanceHandler) Routes() chi.Router {
 	// and query text)
 	r.With(middleware.RequireAdmin(h.DB)).Get("/audit-logs", h.GetAuditLogs)
 	r.With(middleware.RequireAdmin(h.DB)).Get("/audit-logs/export", h.GetAuditLogsExport)
-
-	// ClickHouse query log
-	r.Get("/clickhouse-query-log", h.GetClickHouseQueryLog)
 
 	// Alerts management
 	r.Route("/alerts", func(ar chi.Router) {
@@ -205,14 +198,14 @@ func queryIntBounded(r *http.Request, key string, defaultVal, minVal, maxVal int
 func (h *GovernanceHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	overview, err := h.Store.GetOverview(connID)
 	if err != nil {
 		slog.Error("Failed to get governance overview", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get overview"})
+		writeError(w, http.StatusInternalServerError, "Failed to get overview")
 		return
 	}
 
@@ -221,22 +214,23 @@ func (h *GovernanceHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 
 func (h *GovernanceHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 	if !h.DB.GovernanceSyncEnabled() {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "governance_sync_disabled",
-			"hint":  "Enable governance sync in Governance → Settings before triggering a sync.",
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"error":   "governance_sync_disabled",
+			"hint":    "Enable governance sync in Governance → Settings before triggering a sync.",
 		})
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	result, err := h.Syncer.SyncConnection(r.Context(), *creds)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
@@ -253,27 +247,28 @@ func (h *GovernanceHandler) TriggerSync(w http.ResponseWriter, r *http.Request) 
 
 func (h *GovernanceHandler) TriggerSingleSync(w http.ResponseWriter, r *http.Request) {
 	if !h.DB.GovernanceSyncEnabled() {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "governance_sync_disabled",
-			"hint":  "Enable governance sync in Governance → Settings before triggering a sync.",
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"error":   "governance_sync_disabled",
+			"hint":    "Enable governance sync in Governance → Settings before triggering a sync.",
 		})
 		return
 	}
 
 	syncType := governance.SyncType(chi.URLParam(r, "type"))
 	if syncType != governance.SyncMetadata && syncType != governance.SyncQueryLog && syncType != governance.SyncAccess {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid sync type. Use: metadata, query_log, access"})
+		writeError(w, http.StatusBadRequest, "Invalid sync type. Use: metadata, query_log, access")
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	if err := h.Syncer.SyncSingle(r.Context(), *creds, syncType); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -283,14 +278,14 @@ func (h *GovernanceHandler) TriggerSingleSync(w http.ResponseWriter, r *http.Req
 func (h *GovernanceHandler) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	states, err := h.Store.GetSyncStates(connID)
 	if err != nil {
 		slog.Error("Failed to get sync status", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get sync status"})
+		writeError(w, http.StatusInternalServerError, "Failed to get sync status")
 		return
 	}
 	if states == nil {
@@ -305,14 +300,14 @@ func (h *GovernanceHandler) GetSyncStatus(w http.ResponseWriter, r *http.Request
 func (h *GovernanceHandler) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	databases, err := h.Store.GetDatabases(connID)
 	if err != nil {
 		slog.Error("Failed to list governance databases", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list databases"})
+		writeError(w, http.StatusInternalServerError, "Failed to list databases")
 		return
 	}
 	if databases == nil {
@@ -325,7 +320,7 @@ func (h *GovernanceHandler) ListDatabases(w http.ResponseWriter, r *http.Request
 func (h *GovernanceHandler) ListTables(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -340,7 +335,7 @@ func (h *GovernanceHandler) ListTables(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("Failed to list governance tables", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list tables"})
+		writeError(w, http.StatusInternalServerError, "Failed to list tables")
 		return
 	}
 	if tables == nil {
@@ -365,7 +360,7 @@ func (h *GovernanceHandler) ListTables(w http.ResponseWriter, r *http.Request) {
 func (h *GovernanceHandler) GetTableDetail(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -375,11 +370,11 @@ func (h *GovernanceHandler) GetTableDetail(w http.ResponseWriter, r *http.Reques
 	table, err := h.Store.GetTableByName(connID, dbName, tableName)
 	if err != nil {
 		slog.Error("Failed to get table detail", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get table"})
+		writeError(w, http.StatusInternalServerError, "Failed to get table")
 		return
 	}
 	if table == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Table not found"})
+		writeError(w, http.StatusNotFound, "Table not found")
 		return
 	}
 
@@ -412,37 +407,32 @@ func (h *GovernanceHandler) GetTableDetail(w http.ResponseWriter, r *http.Reques
 	// Get recent queries
 	queries, _, _ := h.Store.GetQueryLog(connID, 20, 0, "", dbName+"."+tableName)
 
-	// Get lineage
-	upstream, downstream, _ := h.Store.GetLineageForTable(connID, dbName, tableName)
-
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"table":          table,
 		"columns":        columns,
 		"tags":           tableTags,
 		"queries":        queries,
 		"recent_queries": queries,
-		"upstream":       upstream,
-		"downstream":     downstream,
 	})
 }
 
 func (h *GovernanceHandler) UpdateTableComment(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	dbName := strings.TrimSpace(chi.URLParam(r, "db"))
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	if dbName == "" || tableName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database and table are required"})
+		writeError(w, http.StatusBadRequest, "Database and table are required")
 		return
 	}
 
@@ -450,7 +440,7 @@ func (h *GovernanceHandler) UpdateTableComment(w http.ResponseWriter, r *http.Re
 		Comment string `json:"comment"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -462,7 +452,7 @@ func (h *GovernanceHandler) UpdateTableComment(w http.ResponseWriter, r *http.Re
 	)
 	if err := h.executeClickHouseSQL(creds, sql); err != nil {
 		slog.Error("Failed to update table comment", "connection", session.ConnectionID, "db", dbName, "table", tableName, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -480,13 +470,13 @@ func (h *GovernanceHandler) UpdateTableComment(w http.ResponseWriter, r *http.Re
 func (h *GovernanceHandler) UpdateColumnComment(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
@@ -494,7 +484,7 @@ func (h *GovernanceHandler) UpdateColumnComment(w http.ResponseWriter, r *http.R
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	columnName := strings.TrimSpace(chi.URLParam(r, "column"))
 	if dbName == "" || tableName == "" || columnName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database, table, and column are required"})
+		writeError(w, http.StatusBadRequest, "Database, table, and column are required")
 		return
 	}
 
@@ -502,7 +492,7 @@ func (h *GovernanceHandler) UpdateColumnComment(w http.ResponseWriter, r *http.R
 		Comment string `json:"comment"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -515,7 +505,7 @@ func (h *GovernanceHandler) UpdateColumnComment(w http.ResponseWriter, r *http.R
 	)
 	if err := h.executeClickHouseSQL(creds, sql); err != nil {
 		slog.Error("Failed to update column comment", "connection", session.ConnectionID, "db", dbName, "table", tableName, "column", columnName, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -533,19 +523,19 @@ func (h *GovernanceHandler) UpdateColumnComment(w http.ResponseWriter, r *http.R
 func (h *GovernanceHandler) ListTableNotes(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	dbName := strings.TrimSpace(chi.URLParam(r, "db"))
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	if dbName == "" || tableName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database and table are required"})
+		writeError(w, http.StatusBadRequest, "Database and table are required")
 		return
 	}
 	notes, err := h.Store.ListObjectComments(connID, "table", dbName, tableName, "", 200)
 	if err != nil {
 		slog.Error("Failed to list table notes", "connection", connID, "db", dbName, "table", tableName, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list table notes"})
+		writeError(w, http.StatusInternalServerError, "Failed to list table notes")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"notes": notes})
@@ -554,20 +544,20 @@ func (h *GovernanceHandler) ListTableNotes(w http.ResponseWriter, r *http.Reques
 func (h *GovernanceHandler) ListColumnNotes(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	dbName := strings.TrimSpace(chi.URLParam(r, "db"))
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	columnName := strings.TrimSpace(chi.URLParam(r, "column"))
 	if dbName == "" || tableName == "" || columnName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database, table and column are required"})
+		writeError(w, http.StatusBadRequest, "Database, table and column are required")
 		return
 	}
 	notes, err := h.Store.ListObjectComments(connID, "column", dbName, tableName, columnName, 200)
 	if err != nil {
 		slog.Error("Failed to list column notes", "connection", connID, "db", dbName, "table", tableName, "column", columnName, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list column notes"})
+		writeError(w, http.StatusInternalServerError, "Failed to list column notes")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"notes": notes})
@@ -576,35 +566,35 @@ func (h *GovernanceHandler) ListColumnNotes(w http.ResponseWriter, r *http.Reque
 func (h *GovernanceHandler) CreateTableNote(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	dbName := strings.TrimSpace(chi.URLParam(r, "db"))
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	if dbName == "" || tableName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database and table are required"})
+		writeError(w, http.StatusBadRequest, "Database and table are required")
 		return
 	}
 	var body struct {
 		CommentText string `json:"comment_text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	commentText := strings.TrimSpace(body.CommentText)
 	if commentText == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text is required"})
+		writeError(w, http.StatusBadRequest, "comment_text is required")
 		return
 	}
 	if len(commentText) > 4000 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text must be <= 4000 characters"})
+		writeError(w, http.StatusBadRequest, "comment_text must be <= 4000 characters")
 		return
 	}
 	id, err := h.Store.CreateObjectComment(session.ConnectionID, "table", dbName, tableName, "", commentText, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create table note", "connection", session.ConnectionID, "db", dbName, "table", tableName, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create table note"})
+		writeError(w, http.StatusInternalServerError, "Failed to create table note")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{
@@ -619,36 +609,36 @@ func (h *GovernanceHandler) CreateTableNote(w http.ResponseWriter, r *http.Reque
 func (h *GovernanceHandler) CreateColumnNote(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	dbName := strings.TrimSpace(chi.URLParam(r, "db"))
 	tableName := strings.TrimSpace(chi.URLParam(r, "table"))
 	columnName := strings.TrimSpace(chi.URLParam(r, "column"))
 	if dbName == "" || tableName == "" || columnName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Database, table and column are required"})
+		writeError(w, http.StatusBadRequest, "Database, table and column are required")
 		return
 	}
 	var body struct {
 		CommentText string `json:"comment_text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	commentText := strings.TrimSpace(body.CommentText)
 	if commentText == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text is required"})
+		writeError(w, http.StatusBadRequest, "comment_text is required")
 		return
 	}
 	if len(commentText) > 4000 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text must be <= 4000 characters"})
+		writeError(w, http.StatusBadRequest, "comment_text must be <= 4000 characters")
 		return
 	}
 	id, err := h.Store.CreateObjectComment(session.ConnectionID, "column", dbName, tableName, columnName, commentText, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create column note", "connection", session.ConnectionID, "db", dbName, "table", tableName, "column", columnName, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create column note"})
+		writeError(w, http.StatusInternalServerError, "Failed to create column note")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{
@@ -663,21 +653,21 @@ func (h *GovernanceHandler) CreateColumnNote(w http.ResponseWriter, r *http.Requ
 func (h *GovernanceHandler) DeleteObjectNote(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		writeError(w, http.StatusBadRequest, "id is required")
 		return
 	}
 	if err := h.Store.DeleteObjectComment(session.ConnectionID, id); err != nil {
 		if err == sql.ErrNoRows {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Note not found"})
+			writeError(w, http.StatusNotFound, "Note not found")
 			return
 		}
 		slog.Error("Failed to delete object note", "connection", session.ConnectionID, "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete note"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete note")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{
@@ -692,7 +682,7 @@ func (h *GovernanceHandler) DeleteObjectNote(w http.ResponseWriter, r *http.Requ
 func (h *GovernanceHandler) ListSchemaChanges(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -700,7 +690,7 @@ func (h *GovernanceHandler) ListSchemaChanges(w http.ResponseWriter, r *http.Req
 	changes, err := h.Store.GetSchemaChanges(connID, limit)
 	if err != nil {
 		slog.Error("Failed to list schema changes", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list schema changes"})
+		writeError(w, http.StatusInternalServerError, "Failed to list schema changes")
 		return
 	}
 	if changes == nil {
@@ -715,7 +705,7 @@ func (h *GovernanceHandler) ListSchemaChanges(w http.ResponseWriter, r *http.Req
 func (h *GovernanceHandler) ListQueryLog(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -727,7 +717,7 @@ func (h *GovernanceHandler) ListQueryLog(w http.ResponseWriter, r *http.Request)
 	entries, total, err := h.Store.GetQueryLog(connID, limit, offset, user, table)
 	if err != nil {
 		slog.Error("Failed to list query log", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list query log"})
+		writeError(w, http.StatusInternalServerError, "Failed to list query log")
 		return
 	}
 	if entries == nil {
@@ -737,197 +727,79 @@ func (h *GovernanceHandler) ListQueryLog(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"entries": entries, "total": total})
 }
 
-func (h *GovernanceHandler) TopQueries(w http.ResponseWriter, r *http.Request) {
+// GetQueryHarvestSettings returns the query-harvest mode plus the current
+// connection's policy count so the UI can tell when auto mode pauses the
+// harvest.
+func (h *GovernanceHandler) GetQueryHarvestSettings(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
-	limit := queryIntBounded(r, "limit", 20, 1, 200)
-	top, err := h.Store.GetTopQueries(connID, limit)
-	if err != nil {
-		slog.Error("Failed to get top queries", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get top queries"})
-		return
-	}
-	if top == nil {
-		top = []map[string]interface{}{}
+	policyCount := 0
+	if policies, err := h.Store.GetPolicies(connID); err != nil {
+		slog.Warn("Failed to count policies for query harvest settings", "error", err)
+	} else {
+		policyCount = len(policies)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"queries": top, "top_queries": top})
-}
-
-// ── Lineage ──────────────────────────────────────────────────────────────────
-
-func (h *GovernanceHandler) GetLineage(w http.ResponseWriter, r *http.Request) {
-	connID := h.connectionID(r)
-	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
-		return
-	}
-
-	dbName := r.URL.Query().Get("database")
-	tableName := r.URL.Query().Get("table")
-	if dbName == "" || tableName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "database and table query params required"})
-		return
-	}
-
-	upstream, downstream, err := h.Store.GetLineageForTable(connID, dbName, tableName)
-	if err != nil {
-		slog.Error("Failed to get lineage", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get lineage"})
-		return
-	}
-	if upstream == nil {
-		upstream = []governance.LineageEdge{}
-	}
-	if downstream == nil {
-		downstream = []governance.LineageEdge{}
-	}
-
-	// Build graph representation
-	nodeMap := make(map[string]governance.LineageNode)
-	currentKey := dbName + "." + tableName
-	nodeMap[currentKey] = governance.LineageNode{
-		ID: currentKey, Database: dbName, Table: tableName, Type: "current",
-	}
-
-	for _, e := range upstream {
-		key := e.SourceDatabase + "." + e.SourceTable
-		if _, ok := nodeMap[key]; !ok {
-			nodeMap[key] = governance.LineageNode{
-				ID: key, Database: e.SourceDatabase, Table: e.SourceTable, Type: "source",
-			}
-		}
-	}
-	for _, e := range downstream {
-		key := e.TargetDatabase + "." + e.TargetTable
-		if _, ok := nodeMap[key]; !ok {
-			nodeMap[key] = governance.LineageNode{
-				ID: key, Database: e.TargetDatabase, Table: e.TargetTable, Type: "target",
-			}
-		}
-	}
-
-	nodes := make([]governance.LineageNode, 0, len(nodeMap))
-	for _, n := range nodeMap {
-		nodes = append(nodes, n)
-	}
-
-	allEdges := append(upstream, downstream...)
-
-	// Enrich: include_columns=true attaches column metadata to nodes and column edges to edges
-	if r.URL.Query().Get("include_columns") == "true" {
-		enrichLineageNodes(h.Store, connID, nodes)
-		enrichLineageEdges(h.Store, allEdges)
-	}
-
+	mode := h.DB.QueryHarvestMode()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"graph": governance.LineageGraph{Nodes: nodes, Edges: allEdges},
+		"mode":         mode,
+		"policy_count": policyCount,
+		"harvesting":   mode == database.QueryHarvestModeAlways || (mode == database.QueryHarvestModeAuto && policyCount > 0),
 	})
 }
 
-func (h *GovernanceHandler) GetLineageGraph(w http.ResponseWriter, r *http.Request) {
-	connID := h.connectionID(r)
-	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+// UpdateQueryHarvestSettings persists the query-harvest mode (admin-only).
+func (h *GovernanceHandler) UpdateQueryHarvestSettings(w http.ResponseWriter, r *http.Request) {
+	session := middleware.GetSession(r)
+	if session == nil {
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
-	edges, err := h.Store.GetFullLineageGraph(connID)
-	if err != nil {
-		slog.Error("Failed to get lineage graph", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get lineage graph"})
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if edges == nil {
-		edges = []governance.LineageEdge{}
+
+	if err := h.DB.SetQueryHarvestMode(body.Mode); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	// Build nodes from edges
-	nodeMap := make(map[string]governance.LineageNode)
-	for _, e := range edges {
-		srcKey := e.SourceDatabase + "." + e.SourceTable
-		if _, ok := nodeMap[srcKey]; !ok {
-			nodeMap[srcKey] = governance.LineageNode{
-				ID: srcKey, Database: e.SourceDatabase, Table: e.SourceTable, Type: "source",
-			}
-		}
-		tgtKey := e.TargetDatabase + "." + e.TargetTable
-		if _, ok := nodeMap[tgtKey]; !ok {
-			nodeMap[tgtKey] = governance.LineageNode{
-				ID: tgtKey, Database: e.TargetDatabase, Table: e.TargetTable, Type: "target",
-			}
-		}
-	}
-
-	nodes := make([]governance.LineageNode, 0, len(nodeMap))
-	for _, n := range nodeMap {
-		nodes = append(nodes, n)
-	}
-
-	// Enrich: include_columns=true attaches column metadata to nodes and column edges to edges
-	if r.URL.Query().Get("include_columns") == "true" {
-		enrichLineageNodes(h.Store, connID, nodes)
-		enrichLineageEdges(h.Store, edges)
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"graph": governance.LineageGraph{Nodes: nodes, Edges: edges},
+	h.DB.CreateAuditLog(database.AuditLogParams{
+		Action:    "governance.query_harvest_mode",
+		Username:  strPtr(session.ClickhouseUser),
+		Details:   strPtr(fmt.Sprintf(`{"mode":%q}`, strings.ToLower(strings.TrimSpace(body.Mode)))),
+		IPAddress: strPtr(r.RemoteAddr),
 	})
-}
 
-// enrichLineageNodes attaches column metadata from gov_columns to each node.
-func enrichLineageNodes(store *governance.Store, connID string, nodes []governance.LineageNode) {
-	for i := range nodes {
-		cols, err := store.GetColumns(connID, nodes[i].Database, nodes[i].Table)
-		if err != nil {
-			slog.Warn("Failed to get columns for lineage node", "node", nodes[i].ID, "error", err)
-			continue
-		}
-		nodes[i].Columns = cols
-	}
-}
-
-// enrichLineageEdges attaches column-level lineage edges to each table-level edge.
-func enrichLineageEdges(store *governance.Store, edges []governance.LineageEdge) {
-	edgeIDs := make([]string, 0, len(edges))
-	for _, e := range edges {
-		edgeIDs = append(edgeIDs, e.ID)
-	}
-
-	colEdgeMap, err := store.GetColumnEdgesForEdgeIDs(edgeIDs)
-	if err != nil {
-		slog.Warn("Failed to get column lineage edges", "error", err)
-		return
-	}
-
-	for i := range edges {
-		if colEdges, ok := colEdgeMap[edges[i].ID]; ok {
-			edges[i].ColumnEdges = colEdges
-		}
-	}
+	h.GetQueryHarvestSettings(w, r)
 }
 
 // GetQueryByQueryID returns a single query log entry by ClickHouse query_id.
 func (h *GovernanceHandler) GetQueryByQueryID(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	queryID := chi.URLParam(r, "query_id")
 	if queryID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query_id is required"})
+		writeError(w, http.StatusBadRequest, "query_id is required")
 		return
 	}
 
 	entry, err := h.Store.GetQueryByQueryID(connID, queryID)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Query not found"})
+		writeError(w, http.StatusNotFound, "Query not found")
 		return
 	}
 
@@ -939,7 +811,7 @@ func (h *GovernanceHandler) GetQueryByQueryID(w http.ResponseWriter, r *http.Req
 func (h *GovernanceHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -956,7 +828,7 @@ func (h *GovernanceHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("Failed to list tags", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list tags"})
+		writeError(w, http.StatusInternalServerError, "Failed to list tags")
 		return
 	}
 	if tags == nil {
@@ -969,7 +841,7 @@ func (h *GovernanceHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 func (h *GovernanceHandler) CreateTag(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -981,23 +853,23 @@ func (h *GovernanceHandler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		Tag          string `json:"tag"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	tag := governance.SensitivityTag(strings.ToUpper(body.Tag))
 	if !governance.ValidTags[tag] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid tag. Valid: PII, FINANCIAL, INTERNAL, PUBLIC, CRITICAL"})
+		writeError(w, http.StatusBadRequest, "Invalid tag. Valid: PII, FINANCIAL, INTERNAL, PUBLIC, CRITICAL")
 		return
 	}
 
 	if body.ObjectType != "table" && body.ObjectType != "column" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "object_type must be 'table' or 'column'"})
+		writeError(w, http.StatusBadRequest, "object_type must be 'table' or 'column'")
 		return
 	}
 
 	if body.DatabaseName == "" || body.TableName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "database_name and table_name are required"})
+		writeError(w, http.StatusBadRequest, "database_name and table_name are required")
 		return
 	}
 
@@ -1007,7 +879,7 @@ func (h *GovernanceHandler) CreateTag(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.Error("Failed to create tag", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create tag"})
+		writeError(w, http.StatusInternalServerError, "Failed to create tag")
 		return
 	}
 
@@ -1024,19 +896,19 @@ func (h *GovernanceHandler) CreateTag(w http.ResponseWriter, r *http.Request) {
 func (h *GovernanceHandler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Tag ID required"})
+		writeError(w, http.StatusBadRequest, "Tag ID required")
 		return
 	}
 
 	if err := h.Store.DeleteTag(id); err != nil {
 		slog.Error("Failed to delete tag", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete tag"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete tag")
 		return
 	}
 
@@ -1055,14 +927,14 @@ func (h *GovernanceHandler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 func (h *GovernanceHandler) ListChUsers(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	users, err := h.Store.GetChUsers(connID)
 	if err != nil {
 		slog.Error("Failed to list CH users", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list users"})
+		writeError(w, http.StatusInternalServerError, "Failed to list users")
 		return
 	}
 	if users == nil {
@@ -1075,13 +947,13 @@ func (h *GovernanceHandler) ListChUsers(w http.ResponseWriter, r *http.Request) 
 func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
@@ -1093,13 +965,13 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 		IfNotExists  *bool    `json:"if_not_exists"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
@@ -1115,17 +987,17 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 	switch authType {
 	case "no_password", "plaintext_password", "sha256_password", "double_sha1_password":
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password"})
+		writeError(w, http.StatusBadRequest, "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password")
 		return
 	}
 	if authType != "no_password" && strings.TrimSpace(body.Password) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password is required for selected auth_type"})
+		writeError(w, http.StatusBadRequest, "password is required for selected auth_type")
 		return
 	}
 
 	allRoles, roleNames, parseErr := parseDefaultRolesInput(body.DefaultRoles)
 	if parseErr != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": parseErr.Error()})
+		writeError(w, http.StatusBadRequest, parseErr.Error())
 		return
 	}
 
@@ -1139,7 +1011,7 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 
 	if err := h.executeClickHouseSQL(creds, createSQL.String()); err != nil {
 		slog.Error("Failed to create ClickHouse user", "connection", session.ConnectionID, "name", name, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -1151,7 +1023,7 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 		grantSQL := "GRANT " + strings.Join(escapedRoles, ", ") + " TO " + escapeIdentifier(name)
 		if err := h.executeClickHouseSQL(creds, grantSQL); err != nil {
 			slog.Error("ClickHouse user created but role grant failed", "connection", session.ConnectionID, "name", name, "error", err)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("user created but failed to grant roles: %v", err)})
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("user created but failed to grant roles: %v", err))
 			return
 		}
 	}
@@ -1163,7 +1035,7 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 		alterSQL := "ALTER USER " + escapeIdentifier(name) + " DEFAULT ROLE " + defaultRoleClause
 		if err := h.executeClickHouseSQL(creds, alterSQL); err != nil {
 			slog.Error("ClickHouse user created but default role assignment failed", "connection", session.ConnectionID, "name", name, "error", err)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("user created but failed to set default role: %v", err)})
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("user created but failed to set default role: %v", err))
 			return
 		}
 	}
@@ -1182,19 +1054,19 @@ func (h *GovernanceHandler) CreateChUser(w http.ResponseWriter, r *http.Request)
 func (h *GovernanceHandler) DeleteChUser(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	creds, err := h.getCredentials(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	name := strings.TrimSpace(chi.URLParam(r, "name"))
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
@@ -1211,7 +1083,7 @@ func (h *GovernanceHandler) DeleteChUser(w http.ResponseWriter, r *http.Request)
 
 	if err := h.executeClickHouseSQL(creds, sql); err != nil {
 		slog.Error("Failed to delete ClickHouse user", "connection", session.ConnectionID, "name", name, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -1229,14 +1101,14 @@ func (h *GovernanceHandler) DeleteChUser(w http.ResponseWriter, r *http.Request)
 func (h *GovernanceHandler) ListChRoles(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	roles, err := h.Store.GetChRoles(connID)
 	if err != nil {
 		slog.Error("Failed to list CH roles", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list roles"})
+		writeError(w, http.StatusInternalServerError, "Failed to list roles")
 		return
 	}
 	if roles == nil {
@@ -1249,7 +1121,7 @@ func (h *GovernanceHandler) ListChRoles(w http.ResponseWriter, r *http.Request) 
 func (h *GovernanceHandler) GetAccessMatrix(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1264,7 +1136,7 @@ func (h *GovernanceHandler) GetAccessMatrix(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		slog.Error("Failed to get access matrix", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get access matrix"})
+		writeError(w, http.StatusInternalServerError, "Failed to get access matrix")
 		return
 	}
 	if matrix == nil {
@@ -1277,7 +1149,7 @@ func (h *GovernanceHandler) GetAccessMatrix(w http.ResponseWriter, r *http.Reque
 func (h *GovernanceHandler) GetOverPermissions(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1285,7 +1157,7 @@ func (h *GovernanceHandler) GetOverPermissions(w http.ResponseWriter, r *http.Re
 	perms, err := h.Store.GetOverPermissionsWithDays(connID, days)
 	if err != nil {
 		slog.Error("Failed to get over-permissions", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get over-permissions"})
+		writeError(w, http.StatusInternalServerError, "Failed to get over-permissions")
 		return
 	}
 	if perms == nil {
@@ -1300,14 +1172,14 @@ func (h *GovernanceHandler) GetOverPermissions(w http.ResponseWriter, r *http.Re
 func (h *GovernanceHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	policies, err := h.Store.GetPolicies(connID)
 	if err != nil {
 		slog.Error("Failed to list policies", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list policies"})
+		writeError(w, http.StatusInternalServerError, "Failed to list policies")
 		return
 	}
 	if policies == nil {
@@ -1320,7 +1192,7 @@ func (h *GovernanceHandler) ListPolicies(w http.ResponseWriter, r *http.Request)
 func (h *GovernanceHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1336,16 +1208,16 @@ func (h *GovernanceHandler) CreatePolicy(w http.ResponseWriter, r *http.Request)
 		EnforcementMode string `json:"enforcement_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if strings.TrimSpace(body.Name) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Policy name is required"})
+		writeError(w, http.StatusBadRequest, "Policy name is required")
 		return
 	}
 	if body.ObjectType != "database" && body.ObjectType != "table" && body.ObjectType != "column" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "object_type must be database, table, or column"})
+		writeError(w, http.StatusBadRequest, "object_type must be database, table, or column")
 		return
 	}
 	if body.Severity == "" {
@@ -1353,7 +1225,7 @@ func (h *GovernanceHandler) CreatePolicy(w http.ResponseWriter, r *http.Request)
 	}
 	enforcementMode, err := normalizePolicyEnforcementMode(body.EnforcementMode)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1364,7 +1236,7 @@ func (h *GovernanceHandler) CreatePolicy(w http.ResponseWriter, r *http.Request)
 	)
 	if err != nil {
 		slog.Error("Failed to create policy", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create policy"})
+		writeError(w, http.StatusInternalServerError, "Failed to create policy")
 		return
 	}
 
@@ -1384,11 +1256,11 @@ func (h *GovernanceHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := h.Store.GetPolicyByID(id)
 	if err != nil {
 		slog.Error("Failed to get policy", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get policy"})
+		writeError(w, http.StatusInternalServerError, "Failed to get policy")
 		return
 	}
 	if policy == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Policy not found"})
+		writeError(w, http.StatusNotFound, "Policy not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": policy})
@@ -1397,7 +1269,7 @@ func (h *GovernanceHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 func (h *GovernanceHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1412,13 +1284,13 @@ func (h *GovernanceHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 		Enabled         *bool  `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	enforcementMode, err := normalizePolicyEnforcementMode(body.EnforcementMode)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1429,7 +1301,7 @@ func (h *GovernanceHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 
 	if err := h.Store.UpdatePolicy(id, body.Name, body.Description, body.RequiredRole, body.Severity, enforcementMode, enabled); err != nil {
 		slog.Error("Failed to update policy", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update policy"})
+		writeError(w, http.StatusInternalServerError, "Failed to update policy")
 		return
 	}
 
@@ -1447,14 +1319,14 @@ func (h *GovernanceHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request)
 func (h *GovernanceHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if err := h.Store.DeletePolicy(id); err != nil {
 		slog.Error("Failed to delete policy", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete policy"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete policy")
 		return
 	}
 
@@ -1473,7 +1345,7 @@ func (h *GovernanceHandler) DeletePolicy(w http.ResponseWriter, r *http.Request)
 func (h *GovernanceHandler) ListViolations(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1483,7 +1355,7 @@ func (h *GovernanceHandler) ListViolations(w http.ResponseWriter, r *http.Reques
 	violations, err := h.Store.GetViolations(connID, limit, policyID)
 	if err != nil {
 		slog.Error("Failed to list violations", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list violations"})
+		writeError(w, http.StatusInternalServerError, "Failed to list violations")
 		return
 	}
 	if violations == nil {
@@ -1496,24 +1368,24 @@ func (h *GovernanceHandler) ListViolations(w http.ResponseWriter, r *http.Reques
 func (h *GovernanceHandler) CreateIncidentFromViolation(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	violationID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if violationID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "violation id is required"})
+		writeError(w, http.StatusBadRequest, "violation id is required")
 		return
 	}
 
 	violation, err := h.Store.GetViolationByID(violationID)
 	if err != nil {
 		slog.Error("Failed to load violation", "id", violationID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load violation"})
+		writeError(w, http.StatusInternalServerError, "Failed to load violation")
 		return
 	}
 	if violation == nil || violation.ConnectionID != session.ConnectionID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Violation not found"})
+		writeError(w, http.StatusNotFound, "Violation not found")
 		return
 	}
 
@@ -1527,7 +1399,7 @@ func (h *GovernanceHandler) CreateIncidentFromViolation(w http.ResponseWriter, r
 	)
 	if err != nil {
 		slog.Error("Failed to upsert incident from violation", "violation", violation.ID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to create incident")
 		return
 	}
 
@@ -1544,7 +1416,7 @@ func (h *GovernanceHandler) CreateIncidentFromViolation(w http.ResponseWriter, r
 func (h *GovernanceHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1555,7 +1427,7 @@ func (h *GovernanceHandler) ListIncidents(w http.ResponseWriter, r *http.Request
 	incidents, err := h.Store.ListIncidents(connID, status, severity, limit)
 	if err != nil {
 		slog.Error("Failed to list incidents", "connection", connID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list incidents"})
+		writeError(w, http.StatusInternalServerError, "Failed to list incidents")
 		return
 	}
 	if incidents == nil {
@@ -1567,22 +1439,22 @@ func (h *GovernanceHandler) ListIncidents(w http.ResponseWriter, r *http.Request
 func (h *GovernanceHandler) GetIncident(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "incident id is required"})
+		writeError(w, http.StatusBadRequest, "incident id is required")
 		return
 	}
 	incident, err := h.Store.GetIncidentByID(id)
 	if err != nil {
 		slog.Error("Failed to load incident", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to load incident")
 		return
 	}
 	if incident == nil || incident.ConnectionID != connID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Incident not found"})
+		writeError(w, http.StatusNotFound, "Incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"incident": incident})
@@ -1591,7 +1463,7 @@ func (h *GovernanceHandler) GetIncident(w http.ResponseWriter, r *http.Request) 
 func (h *GovernanceHandler) CreateIncident(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -1605,12 +1477,12 @@ func (h *GovernanceHandler) CreateIncident(w http.ResponseWriter, r *http.Reques
 		Details    string `json:"details"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	title := strings.TrimSpace(body.Title)
 	if title == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
 	severity := normalizeIncidentSeverity(body.Severity)
@@ -1620,7 +1492,7 @@ func (h *GovernanceHandler) CreateIncident(w http.ResponseWriter, r *http.Reques
 		sourceType = "manual"
 	}
 	if sourceType != "manual" && sourceType != "violation" && sourceType != "over_permission" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source_type must be manual, violation, or over_permission"})
+		writeError(w, http.StatusBadRequest, "source_type must be manual, violation, or over_permission")
 		return
 	}
 
@@ -1638,7 +1510,7 @@ func (h *GovernanceHandler) CreateIncident(w http.ResponseWriter, r *http.Reques
 	)
 	if err != nil {
 		slog.Error("Failed to create incident", "connection", session.ConnectionID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to create incident")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{
@@ -1653,21 +1525,21 @@ func (h *GovernanceHandler) CreateIncident(w http.ResponseWriter, r *http.Reques
 func (h *GovernanceHandler) UpdateIncident(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "incident id is required"})
+		writeError(w, http.StatusBadRequest, "incident id is required")
 		return
 	}
 	existing, err := h.Store.GetIncidentByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to load incident")
 		return
 	}
 	if existing == nil || existing.ConnectionID != session.ConnectionID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Incident not found"})
+		writeError(w, http.StatusNotFound, "Incident not found")
 		return
 	}
 
@@ -1680,7 +1552,7 @@ func (h *GovernanceHandler) UpdateIncident(w http.ResponseWriter, r *http.Reques
 		ResolutionNote *string `json:"resolution_note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -1689,7 +1561,7 @@ func (h *GovernanceHandler) UpdateIncident(w http.ResponseWriter, r *http.Reques
 		title = strings.TrimSpace(*body.Title)
 	}
 	if title == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
 
@@ -1718,7 +1590,7 @@ func (h *GovernanceHandler) UpdateIncident(w http.ResponseWriter, r *http.Reques
 
 	if err := h.Store.UpdateIncident(id, title, severity, status, assignee, details, resolution); err != nil {
 		slog.Error("Failed to update incident", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to update incident")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{
@@ -1733,27 +1605,27 @@ func (h *GovernanceHandler) UpdateIncident(w http.ResponseWriter, r *http.Reques
 func (h *GovernanceHandler) ListIncidentComments(w http.ResponseWriter, r *http.Request) {
 	connID := h.connectionID(r)
 	if connID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "incident id is required"})
+		writeError(w, http.StatusBadRequest, "incident id is required")
 		return
 	}
 	incident, err := h.Store.GetIncidentByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to load incident")
 		return
 	}
 	if incident == nil || incident.ConnectionID != connID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Incident not found"})
+		writeError(w, http.StatusNotFound, "Incident not found")
 		return
 	}
 	comments, err := h.Store.ListIncidentComments(id, 500)
 	if err != nil {
 		slog.Error("Failed to list incident comments", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list incident comments"})
+		writeError(w, http.StatusInternalServerError, "Failed to list incident comments")
 		return
 	}
 	if comments == nil {
@@ -1765,43 +1637,43 @@ func (h *GovernanceHandler) ListIncidentComments(w http.ResponseWriter, r *http.
 func (h *GovernanceHandler) CreateIncidentComment(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "incident id is required"})
+		writeError(w, http.StatusBadRequest, "incident id is required")
 		return
 	}
 	incident, err := h.Store.GetIncidentByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load incident"})
+		writeError(w, http.StatusInternalServerError, "Failed to load incident")
 		return
 	}
 	if incident == nil || incident.ConnectionID != session.ConnectionID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Incident not found"})
+		writeError(w, http.StatusNotFound, "Incident not found")
 		return
 	}
 	var body struct {
 		CommentText string `json:"comment_text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	comment := strings.TrimSpace(body.CommentText)
 	if comment == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text is required"})
+		writeError(w, http.StatusBadRequest, "comment_text is required")
 		return
 	}
 	if len(comment) > 4000 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "comment_text must be <= 4000 characters"})
+		writeError(w, http.StatusBadRequest, "comment_text must be <= 4000 characters")
 		return
 	}
 	commentID, err := h.Store.CreateIncidentComment(id, comment, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create incident comment", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create incident comment"})
+		writeError(w, http.StatusInternalServerError, "Failed to create incident comment")
 		return
 	}
 	h.DB.CreateAuditLog(database.AuditLogParams{

@@ -47,7 +47,7 @@ func (h *SchedulesHandler) List(w http.ResponseWriter, r *http.Request) {
 	schedules, err := h.DB.GetSchedules()
 	if err != nil {
 		slog.Error("Failed to list schedules", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedules"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedules")
 		return
 	}
 
@@ -62,18 +62,18 @@ func (h *SchedulesHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Schedule ID is required"})
+		writeError(w, http.StatusBadRequest, "Schedule ID is required")
 		return
 	}
 
 	schedule, err := h.DB.GetScheduleByID(id)
 	if err != nil {
 		slog.Error("Failed to get schedule", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedule")
 		return
 	}
 	if schedule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Schedule not found"})
+		writeError(w, http.StatusNotFound, "Schedule not found")
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *SchedulesHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TimeoutMs    *int   `json:"timeout_ms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -105,19 +105,19 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	cronExpr := strings.TrimSpace(body.Cron)
 	savedQueryID := strings.TrimSpace(body.SavedQueryID)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 	if cronExpr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Cron expression is required"})
+		writeError(w, http.StatusBadRequest, "Cron expression is required")
 		return
 	}
 	if !scheduler.ValidateCron(cronExpr) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid cron expression"})
+		writeError(w, http.StatusBadRequest, "Invalid cron expression")
 		return
 	}
 	if savedQueryID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Saved query ID is required"})
+		writeError(w, http.StatusBadRequest, "Saved query ID is required")
 		return
 	}
 
@@ -125,11 +125,11 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	savedQuery, err := h.DB.GetSavedQueryByID(savedQueryID)
 	if err != nil {
 		slog.Error("Failed to verify saved query", "error", err, "saved_query_id", savedQueryID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to verify saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to verify saved query")
 		return
 	}
 	if savedQuery == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusBadRequest, "Saved query not found")
 		return
 	}
 
@@ -156,7 +156,7 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	id, err := h.DB.CreateSchedule(name, savedQueryID, connectionID, cronExpr, timezone, session.ClickhouseUser, timeoutMs)
 	if err != nil {
 		slog.Error("Failed to create schedule", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to create schedule")
 		return
 	}
 
@@ -185,24 +185,24 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Schedule ID is required"})
+		writeError(w, http.StatusBadRequest, "Schedule ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetScheduleByID(id)
 	if err != nil {
 		slog.Error("Failed to get schedule for update", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedule")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Scheduled job not found"})
+		writeError(w, http.StatusNotFound, "Scheduled job not found")
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TimeoutMs *int    `json:"timeout_ms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Name != nil {
 		n := strings.TrimSpace(*body.Name)
 		if n == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+			writeError(w, http.StatusBadRequest, "Name is required")
 			return
 		}
 		name = n
@@ -237,7 +237,7 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Cron != nil {
 		c := strings.TrimSpace(*body.Cron)
 		if c == "" || !scheduler.ValidateCron(c) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid cron expression"})
+			writeError(w, http.StatusBadRequest, "Invalid cron expression")
 			return
 		}
 		cron = c
@@ -257,7 +257,7 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TimeoutMs != nil {
 		if *body.TimeoutMs <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "timeout_ms must be greater than 0"})
+			writeError(w, http.StatusBadRequest, "timeout_ms must be greater than 0")
 			return
 		}
 		timeoutMs = *body.TimeoutMs
@@ -265,13 +265,13 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !changed {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No valid fields to update"})
+		writeError(w, http.StatusBadRequest, "No valid fields to update")
 		return
 	}
 
 	if err := h.DB.UpdateSchedule(id, name, cron, timezone, enabled, timeoutMs); err != nil {
 		slog.Error("Failed to update schedule", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to update schedule")
 		return
 	}
 
@@ -296,30 +296,30 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Schedule ID is required"})
+		writeError(w, http.StatusBadRequest, "Schedule ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetScheduleByID(id)
 	if err != nil {
 		slog.Error("Failed to get schedule for delete", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedule")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Scheduled job not found"})
+		writeError(w, http.StatusNotFound, "Scheduled job not found")
 		return
 	}
 
 	if err := h.DB.DeleteSchedule(id); err != nil {
 		slog.Error("Failed to delete schedule", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete schedule")
 		return
 	}
 
@@ -336,18 +336,18 @@ func (h *SchedulesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Schedule ID is required"})
+		writeError(w, http.StatusBadRequest, "Schedule ID is required")
 		return
 	}
 
 	schedule, err := h.DB.GetScheduleByID(id)
 	if err != nil {
 		slog.Error("Failed to get schedule for runs", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedule")
 		return
 	}
 	if schedule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Scheduled job not found"})
+		writeError(w, http.StatusNotFound, "Scheduled job not found")
 		return
 	}
 
@@ -367,7 +367,7 @@ func (h *SchedulesHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.DB.GetScheduleRuns(id, limit+1, offset)
 	if err != nil {
 		slog.Error("Failed to list schedule runs", "error", err, "schedule", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch runs"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch runs")
 		return
 	}
 
@@ -391,24 +391,24 @@ func (h *SchedulesHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 func (h *SchedulesHandler) ManualRun(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Schedule ID is required"})
+		writeError(w, http.StatusBadRequest, "Schedule ID is required")
 		return
 	}
 
 	schedule, err := h.DB.GetScheduleByID(id)
 	if err != nil {
 		slog.Error("Failed to get schedule for manual run", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch schedule")
 		return
 	}
 	if schedule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Scheduled job not found"})
+		writeError(w, http.StatusNotFound, "Scheduled job not found")
 		return
 	}
 
@@ -416,11 +416,11 @@ func (h *SchedulesHandler) ManualRun(w http.ResponseWriter, r *http.Request) {
 	savedQuery, err := h.DB.GetSavedQueryByID(schedule.SavedQueryID)
 	if err != nil {
 		slog.Error("Failed to fetch saved query for manual run", "error", err, "saved_query_id", schedule.SavedQueryID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved query")
 		return
 	}
 	if savedQuery == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusBadRequest, "Saved query not found")
 		return
 	}
 
@@ -434,7 +434,7 @@ func (h *SchedulesHandler) ManualRun(w http.ResponseWriter, r *http.Request) {
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password for manual run", "error", err, "schedule", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 

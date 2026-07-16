@@ -26,8 +26,10 @@
   import { parseCHError, byteToCharOffset } from '../../../utils/ch-error'
   import { isProActive, loadLicense } from '../../../stores/license.svelte'
   import { openSingletonTab, openQueryTab } from '../../../stores/tabs.svelte'
+  import { generateSQL } from '../../../api/brain'
   import { onMount } from 'svelte'
-  import { Lock, Braces, X } from 'lucide-svelte'
+  import { Lock, Braces, X, Sparkles } from 'lucide-svelte'
+  import Button from '../../common/Button.svelte'
   import SqlEditor from '../../editor/SqlEditor.svelte'
   import Toolbar from '../../editor/Toolbar.svelte'
   import ResultPanel from '../../editor/ResultPanel.svelte'
@@ -125,6 +127,40 @@
     currentSql = sql
     updateTabSQL(tab.id, sql)
     debouncedEstimate(sql)
+  }
+
+  // ── Ask AI (text-to-SQL) — Pro feature ────────────────────────────────────
+  let showAsk = $state(false)
+  let askQuestion = $state('')
+  let asking = $state(false)
+
+  async function handleAsk() {
+    const q = askQuestion.trim()
+    if (!q || asking) return
+    asking = true
+    try {
+      const res = await generateSQL(q)
+      const sql = (res.sql ?? '').trim()
+      if (!sql) {
+        toastError('The AI did not return a query. Try rephrasing.')
+        return
+      }
+      editorComponent?.setValue(sql)
+      currentSql = sql
+      updateTabSQL(tab.id, sql)
+      const used = res.tables_used?.length ? ` · ${res.tables_used.length} table(s)` : ''
+      toastSuccess(`Generated SQL${used}. Review before running.`)
+      showAsk = false
+      askQuestion = ''
+    } catch (e: unknown) {
+      let message = e instanceof Error ? e.message : 'Failed to generate SQL'
+      if (/no active ai model/i.test(message)) {
+        message = 'No AI provider configured — add one in Admin → Brain.'
+      }
+      toastError(message)
+    } finally {
+      asking = false
+    }
   }
 
   function debouncedEstimate(sql: string) {
@@ -593,6 +629,9 @@
       oncancel={handleCancel}
       onformat={handleFormat}
       onexplain={handleExplain}
+      onask={() => (showAsk = !showAsk)}
+      askActive={showAsk}
+      askPro={proActive}
       onsave={handleSaveClick}
       onhistory={() => (showHistorySheet = true)}
       onparams={() => (showParamsPanel = !showParamsPanel)}
@@ -601,6 +640,54 @@
       {estimate}
       {estimateLoading}
     />
+
+    <!-- Ask AI (text-to-SQL) bar -->
+    {#if showAsk}
+      <div class="shrink-0 border-b border-gray-200 dark:border-gray-800 bg-ch-orange/5">
+        {#if proActive}
+          <div class="flex items-center gap-2 px-3 py-2">
+            <Sparkles size={15} class="text-ch-orange shrink-0" />
+            <input
+              class="ds-input-sm flex-1"
+              placeholder="Describe the query in plain English — e.g. “top 10 users by orders last month”"
+              bind:value={askQuestion}
+              spellcheck="false"
+              disabled={asking}
+              onkeydown={(e) => { if (e.key === 'Enter') handleAsk(); if (e.key === 'Escape') showAsk = false }}
+            />
+            <Button size="sm" onclick={handleAsk} loading={asking} disabled={!askQuestion.trim()}>
+              Generate
+            </Button>
+            <button class="ds-icon-btn" onclick={() => (showAsk = false)} title="Close" aria-label="Close Ask AI">
+              <X size={14} />
+            </button>
+          </div>
+          <p class="px-3 pb-2 -mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+            Grounded in this connection's schema and your documented models. Always review generated SQL before running.
+          </p>
+        {:else}
+          <!-- Pro upsell -->
+          <div class="flex items-center justify-between gap-3 px-3 py-2">
+            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+              <Lock size={14} class="text-ch-orange shrink-0" />
+              <span>
+                <strong>Ask AI</strong> turns a plain-English question into a ClickHouse query grounded in your schema.
+                It's a <strong>Pro</strong> feature.
+              </span>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button class="ds-btn-primary px-2.5 py-1" onclick={() => openSingletonTab('settings', 'License')}>
+                Upgrade
+              </button>
+              <button class="ds-icon-btn" onclick={() => (showAsk = false)} title="Close" aria-label="Close Ask AI">
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <div class="flex-1 min-h-0">
       <SqlEditor
         bind:this={editorComponent}

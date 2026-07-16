@@ -37,7 +37,7 @@ func (h *GovernanceHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request)
 	logs, err := h.DB.GetAuditLogsFiltered(limit, timeRange, action, username, search)
 	if err != nil {
 		slog.Error("Failed to get audit logs", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve audit logs"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve audit logs")
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *GovernanceHandler) GetAuditLogsExport(w http.ResponseWriter, r *http.Re
 	logs, err := h.DB.GetAuditLogsFiltered(limit, timeRange, action, username, search)
 	if err != nil {
 		slog.Error("Failed to export audit logs", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to export audit logs"})
+		writeError(w, http.StatusInternalServerError, "Failed to export audit logs")
 		return
 	}
 	if logs == nil {

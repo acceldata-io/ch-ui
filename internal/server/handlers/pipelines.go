@@ -60,7 +60,7 @@ func (h *PipelinesHandler) ListPipelines(w http.ResponseWriter, r *http.Request)
 	pipelines, err := h.DB.GetPipelines()
 	if err != nil {
 		slog.Error("Failed to list pipelines", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list pipelines"})
+		writeError(w, http.StatusInternalServerError, "Failed to list pipelines")
 		return
 	}
 
@@ -75,18 +75,18 @@ func (h *PipelinesHandler) ListPipelines(w http.ResponseWriter, r *http.Request)
 func (h *PipelinesHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Pipeline ID is required"})
+		writeError(w, http.StatusBadRequest, "Pipeline ID is required")
 		return
 	}
 
 	pipeline, err := h.DB.GetPipelineByID(id)
 	if err != nil {
 		slog.Error("Failed to get pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get pipeline"})
+		writeError(w, http.StatusInternalServerError, "Failed to get pipeline")
 		return
 	}
 	if pipeline == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Pipeline not found"})
+		writeError(w, http.StatusNotFound, "Pipeline not found")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *PipelinesHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
 func (h *PipelinesHandler) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -126,13 +126,13 @@ func (h *PipelinesHandler) CreatePipeline(w http.ResponseWriter, r *http.Request
 		ConnectionID string `json:"connection_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
@@ -145,7 +145,7 @@ func (h *PipelinesHandler) CreatePipeline(w http.ResponseWriter, r *http.Request
 	id, err := h.DB.CreatePipeline(name, strings.TrimSpace(body.Description), connectionID, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create pipeline", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create pipeline"})
+		writeError(w, http.StatusInternalServerError, "Failed to create pipeline")
 		return
 	}
 
@@ -163,7 +163,7 @@ func (h *PipelinesHandler) CreatePipeline(w http.ResponseWriter, r *http.Request
 func (h *PipelinesHandler) UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -174,19 +174,19 @@ func (h *PipelinesHandler) UpdatePipeline(w http.ResponseWriter, r *http.Request
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
 	if err := h.DB.UpdatePipeline(id, name, strings.TrimSpace(body.Description)); err != nil {
 		slog.Error("Failed to update pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update pipeline"})
+		writeError(w, http.StatusInternalServerError, "Failed to update pipeline")
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *PipelinesHandler) UpdatePipeline(w http.ResponseWriter, r *http.Request
 func (h *PipelinesHandler) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -208,21 +208,21 @@ func (h *PipelinesHandler) DeletePipeline(w http.ResponseWriter, r *http.Request
 	pipeline, err := h.DB.GetPipelineByID(id)
 	if err != nil {
 		slog.Error("Failed to get pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get pipeline"})
+		writeError(w, http.StatusInternalServerError, "Failed to get pipeline")
 		return
 	}
 	if pipeline == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Pipeline not found"})
+		writeError(w, http.StatusNotFound, "Pipeline not found")
 		return
 	}
 	if pipeline.Status == "running" || pipeline.Status == "starting" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "Cannot delete a running pipeline. Stop it first."})
+		writeError(w, http.StatusConflict, "Cannot delete a running pipeline. Stop it first.")
 		return
 	}
 
 	if err := h.DB.DeletePipeline(id); err != nil {
 		slog.Error("Failed to delete pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete pipeline"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete pipeline")
 		return
 	}
 
@@ -239,7 +239,7 @@ func (h *PipelinesHandler) DeletePipeline(w http.ResponseWriter, r *http.Request
 func (h *PipelinesHandler) SaveGraph(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *PipelinesHandler) SaveGraph(w http.ResponseWriter, r *http.Request) {
 		Viewport *graphViewport `json:"viewport"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *PipelinesHandler) SaveGraph(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.DB.SavePipelineGraph(id, nodes, edges, viewportJSON); err != nil {
 		slog.Error("Failed to save pipeline graph", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save pipeline graph"})
+		writeError(w, http.StatusInternalServerError, "Failed to save pipeline graph")
 		return
 	}
 
@@ -301,7 +301,7 @@ func (h *PipelinesHandler) SaveGraph(w http.ResponseWriter, r *http.Request) {
 func (h *PipelinesHandler) StartPipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -309,18 +309,18 @@ func (h *PipelinesHandler) StartPipeline(w http.ResponseWriter, r *http.Request)
 
 	pipeline, err := h.DB.GetPipelineByID(id)
 	if err != nil || pipeline == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Pipeline not found"})
+		writeError(w, http.StatusNotFound, "Pipeline not found")
 		return
 	}
 
 	if pipeline.Status == "running" || pipeline.Status == "starting" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "Pipeline is already running"})
+		writeError(w, http.StatusConflict, "Pipeline is already running")
 		return
 	}
 
 	if err := h.Runner.StartPipeline(id); err != nil {
 		slog.Error("Failed to start pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -337,7 +337,7 @@ func (h *PipelinesHandler) StartPipeline(w http.ResponseWriter, r *http.Request)
 func (h *PipelinesHandler) StopPipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -345,18 +345,18 @@ func (h *PipelinesHandler) StopPipeline(w http.ResponseWriter, r *http.Request) 
 
 	pipeline, err := h.DB.GetPipelineByID(id)
 	if err != nil || pipeline == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Pipeline not found"})
+		writeError(w, http.StatusNotFound, "Pipeline not found")
 		return
 	}
 
 	if pipeline.Status != "running" && pipeline.Status != "starting" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "Pipeline is not running"})
+		writeError(w, http.StatusConflict, "Pipeline is not running")
 		return
 	}
 
 	if err := h.Runner.StopPipeline(id); err != nil {
 		slog.Error("Failed to stop pipeline", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -375,7 +375,7 @@ func (h *PipelinesHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	pipeline, err := h.DB.GetPipelineByID(id)
 	if err != nil || pipeline == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Pipeline not found"})
+		writeError(w, http.StatusNotFound, "Pipeline not found")
 		return
 	}
 
@@ -416,7 +416,7 @@ func (h *PipelinesHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.DB.GetPipelineRuns(id, limit, offset)
 	if err != nil {
 		slog.Error("Failed to list pipeline runs", "error", err, "pipeline", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list runs"})
+		writeError(w, http.StatusInternalServerError, "Failed to list runs")
 		return
 	}
 	if runs == nil {
@@ -440,7 +440,7 @@ func (h *PipelinesHandler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
 	logs, err := h.DB.GetPipelineRunLogs(runID, limit)
 	if err != nil {
 		slog.Error("Failed to get run logs", "error", err, "run", runID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get run logs"})
+		writeError(w, http.StatusInternalServerError, "Failed to get run logs")
 		return
 	}
 	if logs == nil {

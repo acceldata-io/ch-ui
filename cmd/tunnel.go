@@ -48,7 +48,10 @@ var tunnelCreateCmd = &cobra.Command{
 		defer db.Close()
 
 		token := license.GenerateTunnelToken()
-		id, err := db.CreateConnection(name, token, false)
+		id, err := db.CreateConnection(database.CreateConnectionParams{
+			Name:        name,
+			TunnelToken: token,
+		})
 		if err != nil {
 			return fmt.Errorf("create connection: %w", err)
 		}

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { AdminStats } from '../lib/types/api'
-  import { apiGet, apiPut, apiDel, apiPost } from '../lib/api/client'
+  import { apiGet, apiPut, apiDel, apiPost, ApiError } from '../lib/api/client'
+  import { formatDate } from '../lib/utils/format'
   import { fetchClusterInfo, fetchNodeInfo } from '../lib/api/query'
   import type { BrainModelOption, BrainProviderAdmin, BrainSkill } from '../lib/types/brain'
   import {
@@ -29,6 +30,10 @@
   import { getSession } from '../lib/stores/session.svelte'
   import { getGitHubIntegration, saveGitHubIntegration, deleteGitHubIntegration, testGitHubConnection, triggerGitHubSync, getGitHubSyncLogs } from '../lib/api/github'
   import type { GitHubIntegration, GitHubSyncLog } from '../lib/types/models'
+  import { fetchRetentionSettings, updateRetentionSettings } from '../lib/api/retention'
+  import type { RetentionConfig, RetentionSettings } from '../lib/api/retention'
+  import { fetchSSOSettings, updateSSOSettings } from '../lib/api/sso'
+  import type { SSOSettings } from '../lib/api/sso'
 
   // Tab state
   type AdminTab = 'overview' | 'tunnels' | 'users' | 'brain' | 'github'
@@ -38,6 +43,9 @@
   type TunnelConnection = {
     id: string
     name: string
+    type?: 'direct' | 'tunnel'
+    clickhouse_url?: string
+    is_embedded?: boolean
     status: string
     online: boolean
     created_at: string
@@ -72,10 +80,12 @@
   let currentNode = $state<Record<string, unknown> | null>(null)
   let clusterLoading = $state(false)
 
-  // Tunnels
+  // Connections (direct + tunnel)
   let tunnels = $state<TunnelConnection[]>([])
   let tunnelsLoading = $state(false)
   let tunnelCreateName = $state('')
+  let tunnelCreateMode = $state<'direct' | 'tunnel'>('direct')
+  let tunnelCreateUrl = $state('')
   let tunnelCreateLoading = $state(false)
   let tunnelDeleteLoading = $state(false)
   let tunnelDeleteConfirmOpen = $state(false)
@@ -91,6 +101,8 @@
   // Users
   let users = $state<any[]>([])
   let usersSyncCheck = $state(false)
+  let usersError = $state<string | null>(null)
+  let chUsersError = $state<string | null>(null)
   let userRoles = $state<Record<string, string>>({})
   let chUsers = $state<any[]>([])
   let usersLoading = $state(true)
@@ -300,15 +312,143 @@
     }
   }
 
+  const isAdminRole = $derived(getSession()?.role === 'admin')
+
   onMount(() => {
+    if (!isAdminRole) return
     loadStats()
     loadConnections()
     loadClusterInfo()
+    loadRetention()
+    loadSSO()
     const initialTab = normalizeAdminTab(
       typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('tab'),
     )
     switchTab(initialTab, true)
   })
+
+  // Data retention (SQLite history pruning)
+  const retentionTables: Array<{ key: keyof RetentionConfig; label: string }> = [
+    { key: 'audit_logs', label: 'Audit logs' },
+    { key: 'alert_events', label: 'Alert events' },
+    { key: 'alert_dispatch_jobs', label: 'Alert dispatch jobs' },
+    { key: 'schedule_runs', label: 'Schedule runs' },
+    { key: 'pipeline_runs', label: 'Pipeline runs' },
+    { key: 'pipeline_run_logs', label: 'Pipeline run logs' },
+    { key: 'model_runs', label: 'Model runs' },
+    { key: 'model_run_results', label: 'Model run results' },
+    { key: 'github_sync_logs', label: 'GitHub sync logs' },
+    { key: 'gov_schema_changes', label: 'Schema changes' },
+  ]
+  let retention = $state<RetentionSettings | null>(null)
+  let retentionLoading = $state(false)
+  let retentionSaving = $state(false)
+
+  async function loadRetention() {
+    retentionLoading = true
+    try {
+      retention = await fetchRetentionSettings()
+    } catch (e: any) {
+      toastError(e.message)
+    } finally {
+      retentionLoading = false
+    }
+  }
+
+  async function saveRetention() {
+    if (!retention) return
+    retentionSaving = true
+    try {
+      retention = await updateRetentionSettings(retention.config)
+      toastSuccess('Retention settings saved')
+    } catch (e: any) {
+      toastError(e.message)
+    } finally {
+      retentionSaving = false
+    }
+  }
+
+  // SSO (OIDC) configuration
+  let sso = $state<SSOSettings | null>(null)
+  let ssoLoading = $state(false)
+  let ssoSaving = $state(false)
+  let ssoProRequired = $state(false)
+  let ssoSecret = $state('')
+  let ssoForm = $state({
+    enabled: false,
+    issuer_url: '',
+    client_id: '',
+    redirect_base_url: '',
+    admin_groups: '',
+    analyst_groups: '',
+    viewer_groups: '',
+    allowed_domains: '',
+  })
+
+  function splitCsv(value: string): string[] {
+    return value
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  }
+
+  function applySSOSettings(next: SSOSettings) {
+    sso = next
+    ssoForm = {
+      enabled: next.config.enabled,
+      issuer_url: next.config.issuer_url,
+      client_id: next.config.client_id,
+      redirect_base_url: next.config.redirect_base_url,
+      admin_groups: next.config.admin_groups.join(', '),
+      analyst_groups: next.config.analyst_groups.join(', '),
+      viewer_groups: next.config.viewer_groups.join(', '),
+      allowed_domains: next.config.allowed_domains.join(', '),
+    }
+    ssoSecret = ''
+  }
+
+  async function loadSSO() {
+    ssoLoading = true
+    try {
+      applySSOSettings(await fetchSSOSettings())
+      ssoProRequired = false
+    } catch (e: any) {
+      if (String(e?.message ?? '').toLowerCase().includes('pro license')) {
+        ssoProRequired = true
+      } else {
+        toastError(e.message)
+      }
+    } finally {
+      ssoLoading = false
+    }
+  }
+
+  async function saveSSO() {
+    ssoSaving = true
+    try {
+      const next = await updateSSOSettings({
+        enabled: ssoForm.enabled,
+        issuer_url: ssoForm.issuer_url.trim(),
+        client_id: ssoForm.client_id.trim(),
+        client_secret: ssoSecret.trim() || undefined,
+        redirect_base_url: ssoForm.redirect_base_url.trim(),
+        admin_groups: splitCsv(ssoForm.admin_groups),
+        analyst_groups: splitCsv(ssoForm.analyst_groups),
+        viewer_groups: splitCsv(ssoForm.viewer_groups),
+        allowed_domains: splitCsv(ssoForm.allowed_domains),
+      })
+      applySSOSettings(next)
+      if (next.reload_error) {
+        toastError(`Saved, but the SSO provider could not be initialized: ${next.reload_error}`)
+      } else {
+        toastSuccess('SSO settings saved and applied — no restart needed')
+      }
+    } catch (e: any) {
+      toastError(e.message)
+    } finally {
+      ssoSaving = false
+    }
+  }
 
   async function loadStats() {
     statsLoading = true
@@ -329,8 +469,24 @@
     }
   }
 
+  // Turns a failed users-API call into copy that names the actual problem
+  // instead of a generic "connection offline" guess.
+  function describeUsersError(e: unknown): string {
+    const message = e instanceof Error ? e.message : String(e)
+    const status = e instanceof ApiError ? e.status : 0
+    if (status === 403) return 'You need the CH-UI admin role to manage users.'
+    if (/access_denied|not enough privileges|grant show users/i.test(message)) {
+      return 'Your ClickHouse user lacks the SHOW USERS grant — ask your ClickHouse admin for it (GRANT SHOW USERS ON *.*).'
+    }
+    if (status === 503 || /tunnel.*offline|connection.*offline/i.test(message)) {
+      return 'The connection tunnel is offline — bring the agent back online and refresh.'
+    }
+    return message
+  }
+
   async function loadUsers() {
     usersLoading = true
+    usersError = null
     try {
       const [usersResponse, roles] = await Promise.all([
         apiGet<any>('/api/admin/users'),
@@ -348,8 +504,8 @@
         map[r.username] = r.role
       }
       userRoles = map
-    } catch (e: any) {
-      toastError(e.message)
+    } catch (e: unknown) {
+      usersError = describeUsersError(e)
     } finally {
       usersLoading = false
     }
@@ -360,11 +516,12 @@
   }
 
   async function loadClickHouseUsers() {
+    chUsersError = null
     try {
       const res = await apiGet<{ data: any[]; meta: any[] }>('/api/admin/clickhouse-users')
       chUsers = res.data ?? []
-    } catch (e: any) {
-      toastError(e.message)
+    } catch (e: unknown) {
+      chUsersError = describeUsersError(e)
     }
   }
 
@@ -585,14 +742,28 @@
   async function createTunnel() {
     const name = tunnelCreateName.trim()
     if (!name) {
-      toastError('Tunnel name is required')
+      toastError('Connection name is required')
+      return
+    }
+    const url = tunnelCreateUrl.trim()
+    if (tunnelCreateMode === 'direct' && !url) {
+      toastError('ClickHouse URL is required for a direct connection')
       return
     }
     tunnelCreateLoading = true
     try {
-      const res = await apiPost<TunnelTokenResponse>('/api/connections', { name })
-      toastSuccess(`Tunnel "${name}" created`)
+      const body =
+        tunnelCreateMode === 'direct'
+          ? { name, type: 'direct', clickhouse_url: url }
+          : { name }
+      const res = await apiPost<TunnelTokenResponse>('/api/connections', body)
+      toastSuccess(
+        tunnelCreateMode === 'direct'
+          ? `Connection "${name}" created and connecting to ${url}`
+          : `Tunnel "${name}" created`
+      )
       tunnelCreateName = ''
+      tunnelCreateUrl = ''
       await Promise.all([loadTunnels(), loadConnections(), loadStats()])
       const createdConn = res.connection
       if (createdConn?.id && createdConn?.name && res.tunnel_token) {
@@ -912,19 +1083,21 @@
     }
   }
 
-  function formatTime(ts: string): string {
-    try {
-      return new Date(ts).toLocaleString()
-    } catch {
-      return ts
-    }
-  }
-
   function truncate(s: string, max = 80): string {
     return s.length > max ? s.slice(0, max) + '...' : s
   }
 </script>
 
+{#if !isAdminRole}
+  <div class="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
+    <Shield size={28} class="text-gray-400" />
+    <h1 class="ds-page-title">Admin access required</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md">
+      You are signed in as <span class="font-semibold">{getSession()?.role ?? 'viewer'}</span>.
+      Ask a CH-UI admin to grant you the admin role (Admin &rarr; Users), then log in again.
+    </p>
+  </div>
+{:else}
 <div class="flex flex-col h-full">
   <div class="border-b border-gray-200 dark:border-gray-800">
     <div class="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:gap-4">
@@ -933,7 +1106,7 @@
         <h1 class="ds-page-title">Admin Panel</h1>
       </div>
       <nav class="ds-tabs border-0 px-0 pt-0 gap-1 overflow-x-auto whitespace-nowrap" aria-label="Admin Tabs">
-        {#each [['overview', 'Overview'], ['tunnels', 'Tunnels'], ['users', 'Users'], ['brain', 'Brain'], ['github', 'GitHub']] as [key, label]}
+        {#each [['overview', 'Overview'], ['tunnels', 'Connections'], ['users', 'Users'], ['brain', 'Brain'], ['github', 'GitHub']] as [key, label]}
           <button
             class="ds-tab {activeTab === key ? 'ds-tab-active' : ''}"
             onclick={() => switchTab(key as AdminTab)}
@@ -1374,28 +1547,224 @@
         {/if}
       </div>
 
+      <!-- Data retention -->
+      <div class="mt-6">
+        <div class="flex items-center gap-2 mb-2">
+          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Data Retention</h2>
+          <HelpTip text="History tables (audit logs, alert events, run logs...) are pruned automatically after the configured number of days to keep the metadata database small. 0 keeps rows forever." />
+        </div>
+
+        {#if retentionLoading}
+          <div class="flex items-center justify-center py-6"><Spinner /></div>
+        {:else if retention}
+          <div class="ds-panel p-3">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {#each retentionTables as t}
+                <label class="block space-y-1">
+                  <span class="ds-form-label">{t.label}</span>
+                  <div class="flex items-center gap-1.5">
+                    <input
+                      class="ds-input-sm w-20 tabular-nums"
+                      type="number"
+                      min="0"
+                      max="3650"
+                      bind:value={retention.config[t.key]}
+                    />
+                    <span class="text-[11px] text-gray-400">days</span>
+                  </div>
+                  {#if retention.last_run && (retention.last_run.rows_deleted[t.key] ?? 0) > 0}
+                    <p class="text-[10px] text-gray-400">-{retention.last_run.rows_deleted[t.key]} rows last run</p>
+                  {/if}
+                </label>
+              {/each}
+            </div>
+            <div class="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+              <button class="ds-btn-primary" onclick={() => saveRetention()} disabled={retentionSaving}>
+                {retentionSaving ? 'Saving...' : 'Save'}
+              </button>
+              {#if retention.last_run}
+                <span class="text-xs text-gray-500">
+                  Last cleanup: {new Date(retention.last_run.last_run_at).toLocaleString()}
+                  · {retention.last_run.total_deleted} row{retention.last_run.total_deleted !== 1 ? 's' : ''} deleted
+                  · {retention.last_run.duration_ms} ms
+                </span>
+                {#if retention.last_run.last_error}
+                  <span class="text-xs text-red-600 dark:text-red-400">{retention.last_run.last_error}</span>
+                {/if}
+              {:else}
+                <span class="text-xs text-gray-400">Cleanup has not run yet — it runs hourly.</span>
+              {/if}
+            </div>
+          </div>
+        {:else}
+          <p class="text-sm text-gray-500">Could not load retention settings.</p>
+        {/if}
+      </div>
+
+      <!-- SSO (OIDC) -->
+      <div class="mt-6">
+        <div class="flex items-center gap-2 mb-2">
+          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Single Sign-On (OIDC)</h2>
+          <HelpTip text="Let users sign in through your identity provider (Okta, Entra ID, Google, Keycloak). Users in an admin or analyst group get that role; everyone else is a viewer. Queries run via the connection's ClickHouse service account. Pro feature." />
+          {#if sso}
+            {#if sso.active}
+              <span class="ds-badge ds-badge-success">Active</span>
+            {:else}
+              <span class="ds-badge ds-badge-neutral">Inactive</span>
+            {/if}
+          {/if}
+        </div>
+
+        {#if ssoProRequired || !isProActive()}
+          <div class="ds-panel p-3 flex items-center gap-3">
+            <KeyRound size={16} class="text-gray-400 shrink-0" />
+            <p class="text-sm text-gray-500">SSO lets your team sign in through your identity provider. Requires a Pro license.</p>
+          </div>
+        {:else if ssoLoading}
+          <div class="flex items-center justify-center py-6"><Spinner /></div>
+        {:else if sso}
+          <div class="ds-panel p-3 space-y-3">
+            {#if sso.env_managed}
+              <p class="text-xs px-2 py-1.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                SSO is configured via environment variables / the server config file, which always take precedence over settings saved here.
+                The values below are read-only — edit the server config (and restart) to change them.
+              </p>
+            {/if}
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label class="block space-y-1">
+                <span class="ds-form-label">Issuer URL</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="https://accounts.google.com"
+                  bind:value={ssoForm.issuer_url} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Client ID</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="your-client-id"
+                  bind:value={ssoForm.client_id} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">
+                  Client Secret
+                  {#if sso.config.has_secret}
+                    <span class="text-green-500 font-normal ml-1">(configured)</span>
+                  {/if}
+                </span>
+                <input class="ds-input-sm w-full" type="password" autocomplete="off"
+                  placeholder={sso.config.has_secret ? 'Leave blank to keep current secret' : 'client secret'}
+                  bind:value={ssoSecret} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Redirect Base URL</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="https://ch-ui.yourcompany.com (defaults to the server URL)"
+                  bind:value={ssoForm.redirect_base_url} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Admin Groups</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="ch-ui-admins, platform"
+                  bind:value={ssoForm.admin_groups} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Analyst Groups</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="data-analysts"
+                  bind:value={ssoForm.analyst_groups} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Viewer Groups</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="everyone (users in no mapped group are viewers)"
+                  bind:value={ssoForm.viewer_groups} disabled={sso.env_managed} />
+              </label>
+              <label class="block space-y-1">
+                <span class="ds-form-label">Allowed Email Domains</span>
+                <input class="ds-input-sm w-full" type="text" placeholder="yourcompany.com (empty = allow all)"
+                  bind:value={ssoForm.allowed_domains} disabled={sso.env_managed} />
+              </label>
+            </div>
+
+            <p class="text-[11px] text-gray-400">Groups and domains are comma-separated. Users in none of the groups get the viewer role.</p>
+
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-gray-500">Callback URL (register in your IdP):</span>
+              <code class="text-[11px] font-mono text-gray-700 dark:text-gray-300 truncate">{sso.config.redirect_url}</code>
+              <button class="ds-btn-ghost p-1" onclick={() => copyText(sso!.config.redirect_url, 'Callback URL')} title="Copy callback URL">
+                <Copy size={12} />
+              </button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+              {#if !sso.env_managed}
+                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" bind:checked={ssoForm.enabled} />
+                  Enable SSO
+                </label>
+                <button class="ds-btn-primary" onclick={() => saveSSO()} disabled={ssoSaving}>
+                  {ssoSaving ? 'Saving...' : 'Save'}
+                </button>
+                <span class="text-xs text-gray-400">Changes apply immediately — no restart needed.</span>
+              {/if}
+              {#if sso.reload_error}
+                <span class="text-xs text-red-600 dark:text-red-400">Provider init failed: {sso.reload_error}</span>
+              {/if}
+            </div>
+          </div>
+        {:else}
+          <p class="text-sm text-gray-500">Could not load SSO settings.</p>
+        {/if}
+      </div>
+
     {:else if activeTab === 'tunnels'}
-      <div class="flex flex-wrap items-end gap-2 mb-3">
-        <label class="space-y-1">
-          <span class="text-xs text-gray-500">Tunnel Name</span>
-          <input
-            class="ds-input-sm w-72"
-            placeholder="warehouse-prod"
-            bind:value={tunnelCreateName}
-            onkeydown={(e) => e.key === 'Enter' && createTunnel()}
-          />
-        </label>
-        <button
-          class="ds-btn-primary"
-          onclick={() => createTunnel()}
-          disabled={tunnelCreateLoading || !tunnelCreateName.trim()}
-        >
-          <Plus size={14} />
-          {tunnelCreateLoading ? 'Creating...' : 'Create Tunnel'}
-        </button>
-        <button class="ds-btn-ghost" onclick={() => loadTunnels()} title="Refresh tunnels">
-          <RefreshCw size={14} />
-        </button>
+      <div class="ds-panel p-3 mb-3 space-y-2">
+        <div class="flex gap-1">
+          <button
+            class="ds-tab {tunnelCreateMode === 'direct' ? 'ds-tab-active' : ''}"
+            onclick={() => (tunnelCreateMode = 'direct')}
+          >
+            Direct URL
+          </button>
+          <button
+            class="ds-tab {tunnelCreateMode === 'tunnel' ? 'ds-tab-active' : ''}"
+            onclick={() => (tunnelCreateMode = 'tunnel')}
+          >
+            Remote Agent
+          </button>
+        </div>
+        <p class="text-[11px] text-gray-500">
+          {tunnelCreateMode === 'direct'
+            ? 'Connect to a ClickHouse server this CH-UI instance can reach over HTTP(S). No agent needed; connects immediately.'
+            : 'For ClickHouse servers behind a firewall: creates a token, then run the ch-ui agent next to that server.'}
+        </p>
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="space-y-1">
+            <span class="text-xs text-gray-500">Connection Name</span>
+            <input
+              class="ds-input-sm w-56"
+              placeholder="warehouse-prod"
+              bind:value={tunnelCreateName}
+              onkeydown={(e) => e.key === 'Enter' && createTunnel()}
+            />
+          </label>
+          {#if tunnelCreateMode === 'direct'}
+            <label class="space-y-1">
+              <span class="text-xs text-gray-500">ClickHouse URL</span>
+              <input
+                class="ds-input-sm w-72"
+                placeholder="http://clickhouse-host:8123"
+                bind:value={tunnelCreateUrl}
+                onkeydown={(e) => e.key === 'Enter' && createTunnel()}
+              />
+            </label>
+          {/if}
+          <button
+            class="ds-btn-primary"
+            onclick={() => createTunnel()}
+            disabled={tunnelCreateLoading || !tunnelCreateName.trim() || (tunnelCreateMode === 'direct' && !tunnelCreateUrl.trim())}
+          >
+            <Plus size={14} />
+            {tunnelCreateLoading ? 'Creating...' : tunnelCreateMode === 'direct' ? 'Add Connection' : 'Create Tunnel'}
+          </button>
+          <button class="ds-btn-ghost" onclick={() => loadTunnels()} title="Refresh connections">
+            <RefreshCw size={14} />
+          </button>
+        </div>
       </div>
 
       {#if tunnelTokenPreview}
@@ -1437,14 +1806,15 @@
       {#if tunnelsLoading}
         <div class="flex items-center justify-center py-12"><Spinner /></div>
       {:else if tunnels.length === 0}
-        <p class="text-sm text-gray-500">No tunnels configured</p>
+        <p class="text-sm text-gray-500">No connections configured</p>
       {:else}
         <div class="ds-table-wrap">
           <table class="ds-table">
             <thead>
               <tr class="ds-table-head-row">
                 <th class="ds-table-th">Name</th>
-                <th class="ds-table-th">ID</th>
+                <th class="ds-table-th">Type</th>
+                <th class="ds-table-th">Target</th>
                 <th class="ds-table-th">Status</th>
                 <th class="ds-table-th">Host</th>
                 <th class="ds-table-th">Created</th>
@@ -1455,7 +1825,12 @@
               {#each tunnels as conn}
                 <tr class="ds-table-row">
                   <td class="ds-td-strong">{conn.name}</td>
-                  <td class="ds-td-mono">{conn.id}</td>
+                  <td class="ds-td">
+                    <span class="ds-badge">
+                      {conn.is_embedded ? 'Embedded' : conn.type === 'direct' ? 'Direct' : 'Agent'}
+                    </span>
+                  </td>
+                  <td class="ds-td-mono">{conn.clickhouse_url || '—'}</td>
                   <td class="ds-td">
                     <span class="inline-flex items-center gap-2">
                       <span class="w-2 h-2 rounded-full {conn.online ? 'bg-green-500' : 'bg-gray-400'}"></span>
@@ -1463,18 +1838,24 @@
                     </span>
                   </td>
                   <td class="ds-td-mono">{conn.host_info?.hostname || '—'}</td>
-                  <td class="ds-td-mono whitespace-nowrap">{formatTime(conn.created_at)}</td>
+                  <td class="ds-td-mono whitespace-nowrap">{formatDate(conn.created_at)}</td>
                   <td class="ds-td-right">
                     <div class="flex justify-end gap-2">
-                      <button class="ds-btn-outline px-2.5 py-1.5" onclick={() => viewTunnelToken(conn)}>Token</button>
-                      <button class="ds-btn-outline px-2.5 py-1.5" onclick={() => regenerateTunnelToken(conn)}>Regenerate</button>
-                      <button
-                        class="ds-btn-outline px-2.5 py-1.5 border-red-300/80 text-red-600 hover:text-red-700 hover:border-red-500"
-                        onclick={() => requestDeleteTunnel(conn)}
-                      >
-                        <Trash2 size={12} />
-                        Delete
-                      </button>
+                      {#if conn.type !== 'direct'}
+                        <button class="ds-btn-outline px-2.5 py-1.5" onclick={() => viewTunnelToken(conn)}>Token</button>
+                        <button class="ds-btn-outline px-2.5 py-1.5" onclick={() => regenerateTunnelToken(conn)}>Regenerate</button>
+                      {/if}
+                      {#if conn.is_embedded}
+                        <span class="text-[11px] text-gray-500 self-center">Managed by server config</span>
+                      {:else}
+                        <button
+                          class="ds-btn-outline px-2.5 py-1.5 border-red-300/80 text-red-600 hover:text-red-700 hover:border-red-500"
+                          onclick={() => requestDeleteTunnel(conn)}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      {/if}
                     </div>
                   </td>
                 </tr>
@@ -1492,13 +1873,19 @@
           <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Application Users</h2>
           <HelpTip text="Admin access is explicit in CH-UI (role override). ClickHouse grants alone do not grant Admin UI actions. Safety rule: the last admin override cannot be removed." />
         </div>
-        {#if !usersSyncCheck}
+        {#if usersError}
+          <div class="mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+            {usersError}
+          </div>
+        {:else if !usersSyncCheck}
           <div class="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            User sync check is unavailable right now (connection offline or auth issue). Application users list may include stale session users.
+            The ClickHouse user check could not run, so this list may include stale session users.
           </div>
         {/if}
         {#if users.length === 0}
-          <p class="text-sm text-gray-500 mb-4">No users found</p>
+          {#if !usersError}
+            <p class="text-sm text-gray-500 mb-4">No users found</p>
+          {/if}
         {:else}
 	          <div class="ds-table-wrap mb-6">
 	            <table class="ds-table">
@@ -1531,7 +1918,7 @@
                         {/each}
                       </div>
                     </td>
-	                    <td class="ds-td-mono">{user.last_login ? formatTime(user.last_login) : '—'}</td>
+	                    <td class="ds-td-mono">{user.last_login ? formatDate(user.last_login) : '—'}</td>
 	                    <td class="ds-td-right">
                       {#if userRoles[user.username]}
                         <button
@@ -1563,7 +1950,11 @@
           </div>
         </div>
 
-        {#if chUsers.length === 0}
+        {#if chUsersError}
+          <div class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+            {chUsersError}
+          </div>
+        {:else if chUsers.length === 0}
           <div class="ds-empty">
             <p class="text-sm text-gray-500 mb-2">No ClickHouse users loaded</p>
             <button class="ds-btn-primary" onclick={() => openCreateCHUserSheet()}>
@@ -2030,3 +2421,4 @@ GROUP BY id</pre>
     {/if}
   </div>
 </div>
+{/if}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/crypto"
 	"github.com/caioricciuti/ch-ui/internal/database"
+	"github.com/caioricciuti/ch-ui/internal/embedded"
 	"github.com/caioricciuti/ch-ui/internal/license"
 	"github.com/caioricciuti/ch-ui/internal/server/middleware"
 	"github.com/caioricciuti/ch-ui/internal/tunnel"
@@ -23,6 +25,21 @@ type ConnectionsHandler struct {
 	DB      *database.DB
 	Gateway *tunnel.Gateway
 	Config  *config.Config
+	Agents  *embedded.Manager
+}
+
+// validateClickHouseURL checks that a direct connection target is a usable
+// http(s) URL.
+func validateClickHouseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("clickhouse_url is required for direct connections")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("clickhouse_url must be a valid http:// or https:// URL")
+	}
+	return strings.TrimRight(raw, "/"), nil
 }
 
 // connectionResponse extends Connection with live status information.
@@ -39,7 +56,7 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	conns, err := h.DB.GetConnections()
 	if err != nil {
 		slog.Error("Failed to list connections", "error", err)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connections"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connections")
 		return
 	}
 
@@ -48,7 +65,7 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 		results = append(results, h.buildConnectionResponse(c))
 	}
 
-	connJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, results)
 }
 
 // SetSSOAccount stores the ClickHouse service account that OIDC SSO sessions on
@@ -57,7 +74,7 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ConnectionsHandler) SetSSOAccount(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
@@ -66,25 +83,25 @@ func (h *ConnectionsHandler) SetSSOAccount(w http.ResponseWriter, r *http.Reques
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "username is required"})
+		writeError(w, http.StatusBadRequest, "username is required")
 		return
 	}
 
 	encrypted, err := crypto.Encrypt(req.Password, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to encrypt SSO service account password", "error", err)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to store credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to store credentials")
 		return
 	}
 
 	if err := h.DB.SetConnectionSSOAccount(id, req.Username, encrypted); err != nil {
 		slog.Error("Failed to set SSO service account", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save SSO service account"})
+		writeError(w, http.StatusInternalServerError, "Failed to save SSO service account")
 		return
 	}
 
@@ -95,7 +112,7 @@ func (h *ConnectionsHandler) SetSSOAccount(w http.ResponseWriter, r *http.Reques
 		IPAddress:    strPtr(getClientIP(r)),
 	})
 
-	connJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // Get returns a single connection by ID.
@@ -103,47 +120,77 @@ func (h *ConnectionsHandler) SetSSOAccount(w http.ResponseWriter, r *http.Reques
 func (h *ConnectionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil {
 		slog.Error("Failed to get connection", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if conn == nil {
-		connJSON(w, http.StatusNotFound, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
-	connJSON(w, http.StatusOK, h.buildConnectionResponse(*conn))
+	writeJSON(w, http.StatusOK, h.buildConnectionResponse(*conn))
 }
 
-// Create creates a new connection.
+// Create creates a new connection. Two shapes:
+//   - tunnel (default): {"name": "..."} — returns a token + agent setup steps.
+//   - direct: {"name": "...", "type": "direct", "clickhouse_url": "http://host:8123"}
+//     — starts an in-process connector immediately, no agent required.
+//
 // POST /
 func (h *ConnectionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name          string `json:"name"`
+		Type          string `json:"type"`
+		ClickHouseURL string `json:"clickhouse_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection name is required"})
+		writeError(w, http.StatusBadRequest, "Connection name is required")
 		return
+	}
+
+	connType := strings.TrimSpace(strings.ToLower(body.Type))
+	if connType == "" {
+		connType = database.ConnectionTypeTunnel
+	}
+	if connType != database.ConnectionTypeTunnel && connType != database.ConnectionTypeDirect {
+		writeError(w, http.StatusBadRequest, "type must be \"direct\" or \"tunnel\"")
+		return
+	}
+
+	chURL := ""
+	if connType == database.ConnectionTypeDirect {
+		validated, err := validateClickHouseURL(body.ClickHouseURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		chURL = validated
 	}
 
 	token := license.GenerateTunnelToken()
 
-	id, err := h.DB.CreateConnection(name, token, false)
+	id, err := h.DB.CreateConnection(database.CreateConnectionParams{
+		Name:          name,
+		TunnelToken:   token,
+		Type:          connType,
+		ClickHouseURL: chURL,
+	})
 	if err != nil {
 		slog.Error("Failed to create connection", "error", err)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to create connection")
 		return
 	}
 
@@ -156,22 +203,127 @@ func (h *ConnectionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Action:       "connection.created",
 		Username:     username,
 		ConnectionID: strPtr(id),
-		Details:      strPtr(fmt.Sprintf("Created connection %q", name)),
+		Details:      strPtr(fmt.Sprintf("Created %s connection %q", connType, name)),
 		IPAddress:    strPtr(r.RemoteAddr),
 	})
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil || conn == nil {
 		slog.Error("Failed to retrieve created connection", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Connection created but failed to retrieve"})
+		writeError(w, http.StatusInternalServerError, "Connection created but failed to retrieve")
 		return
 	}
 
-	connJSON(w, http.StatusCreated, map[string]interface{}{
+	if connType == database.ConnectionTypeDirect {
+		if h.Agents != nil {
+			h.Agents.StartConnection(*conn)
+		}
+		writeJSON(w, http.StatusCreated, map[string]interface{}{
+			"connection": conn,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"connection":         conn,
 		"tunnel_token":       token,
 		"setup_instructions": getSetupInstructions(token),
 	})
+}
+
+// Update renames a connection and, for direct connections, changes the target
+// ClickHouse URL (restarting the in-process connector). The embedded
+// connection is managed by server config and cannot be edited here.
+// PUT /{id}  { "name"?: "...", "clickhouse_url"?: "..." }
+func (h *ConnectionsHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
+		return
+	}
+
+	conn, err := h.DB.GetConnectionByID(id)
+	if err != nil {
+		slog.Error("Failed to get connection for update", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
+		return
+	}
+	if conn == nil {
+		writeError(w, http.StatusNotFound, "Connection not found")
+		return
+	}
+	if conn.IsEmbedded {
+		writeError(w, http.StatusBadRequest, "The embedded connection is managed by server configuration (clickhouse_url / connection_name)")
+		return
+	}
+
+	var body struct {
+		Name          *string `json:"name"`
+		ClickHouseURL *string `json:"clickhouse_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	var changes []string
+	if body.Name != nil {
+		name := strings.TrimSpace(*body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "Connection name cannot be empty")
+			return
+		}
+		if name != conn.Name {
+			if err := h.DB.UpdateConnectionName(id, name); err != nil {
+				slog.Error("Failed to rename connection", "error", err, "id", id)
+				writeError(w, http.StatusInternalServerError, "Failed to rename connection")
+				return
+			}
+			changes = append(changes, fmt.Sprintf("renamed %q to %q", conn.Name, name))
+			conn.Name = name
+		}
+	}
+
+	if body.ClickHouseURL != nil {
+		if conn.Type != database.ConnectionTypeDirect {
+			writeError(w, http.StatusBadRequest, "clickhouse_url can only be set on direct connections")
+			return
+		}
+		validated, err := validateClickHouseURL(*body.ClickHouseURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if validated != conn.ClickHouseURL {
+			if err := h.DB.UpdateConnectionClickHouseURL(id, validated); err != nil {
+				slog.Error("Failed to update connection URL", "error", err, "id", id)
+				writeError(w, http.StatusInternalServerError, "Failed to update connection URL")
+				return
+			}
+			changes = append(changes, fmt.Sprintf("clickhouse_url set to %s", validated))
+			conn.ClickHouseURL = validated
+			if h.Agents != nil {
+				h.Agents.StartConnection(*conn) // restart with the new target
+			}
+		}
+	}
+
+	if len(changes) > 0 {
+		session := middleware.GetSession(r)
+		var username *string
+		if session != nil {
+			username = strPtr(session.ClickhouseUser)
+		}
+		h.DB.CreateAuditLog(database.AuditLogParams{
+			Action:       "connection.updated",
+			Username:     username,
+			ConnectionID: strPtr(id),
+			Details:      strPtr(fmt.Sprintf("Updated connection: %s", strings.Join(changes, "; "))),
+			IPAddress:    strPtr(r.RemoteAddr),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, h.buildConnectionResponse(*conn))
 }
 
 // Delete deletes a connection by ID.
@@ -179,24 +331,29 @@ func (h *ConnectionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ConnectionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil {
 		slog.Error("Failed to get connection for deletion", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if conn == nil {
-		connJSON(w, http.StatusNotFound, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusNotFound, "Connection not found")
 		return
+	}
+
+	// Stop the in-process connector before removing a direct connection.
+	if conn.Type == database.ConnectionTypeDirect && h.Agents != nil {
+		h.Agents.StopConnection(id)
 	}
 
 	if err := h.DB.DeleteConnection(id); err != nil {
 		slog.Error("Failed to delete connection", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete connection")
 		return
 	}
 
@@ -213,7 +370,7 @@ func (h *ConnectionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		IPAddress:    strPtr(r.RemoteAddr),
 	})
 
-	connJSON(w, http.StatusOK, map[string]string{"message": "Connection deleted successfully"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Connection deleted successfully"})
 }
 
 // TestConnection tests a ClickHouse connection through the tunnel.
@@ -221,26 +378,23 @@ func (h *ConnectionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *ConnectionsHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil {
 		slog.Error("Failed to get connection for test", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if conn == nil {
-		connJSON(w, http.StatusNotFound, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
 	if !h.Gateway.IsTunnelOnline(id) {
-		connJSON(w, http.StatusOK, map[string]interface{}{
-			"success": false,
-			"error":   "Tunnel is not connected. Please ensure the agent is running.",
-		})
+		writeError(w, http.StatusOK, "Tunnel is not connected. Please ensure the agent is running.")
 		return
 	}
 
@@ -249,7 +403,7 @@ func (h *ConnectionsHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -262,14 +416,11 @@ func (h *ConnectionsHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	result, err := h.Gateway.TestConnection(id, username, password, 15*time.Second)
 	if err != nil {
 		slog.Warn("Connection test failed", "error", err, "id", id)
-		connJSON(w, http.StatusOK, map[string]interface{}{
-			"success": false,
-			"error":   err.Error(),
-		})
+		writeError(w, http.StatusOK, err.Error())
 		return
 	}
 
-	connJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // GetToken returns the tunnel token for a connection.
@@ -277,22 +428,22 @@ func (h *ConnectionsHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 func (h *ConnectionsHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil {
 		slog.Error("Failed to get connection for token", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if conn == nil {
-		connJSON(w, http.StatusNotFound, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
-	connJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tunnel_token":       conn.TunnelToken,
 		"setup_instructions": getSetupInstructions(conn.TunnelToken),
 	})
@@ -303,18 +454,18 @@ func (h *ConnectionsHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 func (h *ConnectionsHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		connJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection ID is required"})
+		writeError(w, http.StatusBadRequest, "Connection ID is required")
 		return
 	}
 
 	conn, err := h.DB.GetConnectionByID(id)
 	if err != nil {
 		slog.Error("Failed to get connection for token regeneration", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if conn == nil {
-		connJSON(w, http.StatusNotFound, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
@@ -322,7 +473,7 @@ func (h *ConnectionsHandler) RegenerateToken(w http.ResponseWriter, r *http.Requ
 
 	if err := h.DB.UpdateConnectionToken(id, newToken); err != nil {
 		slog.Error("Failed to regenerate token", "error", err, "id", id)
-		connJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to regenerate token"})
+		writeError(w, http.StatusInternalServerError, "Failed to regenerate token")
 		return
 	}
 
@@ -339,7 +490,7 @@ func (h *ConnectionsHandler) RegenerateToken(w http.ResponseWriter, r *http.Requ
 		IPAddress:    strPtr(r.RemoteAddr),
 	})
 
-	connJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tunnel_token":       newToken,
 		"setup_instructions": getSetupInstructions(newToken),
 		"message":            "Token regenerated successfully. The previous token is now invalid.",
@@ -374,11 +525,4 @@ func getSetupInstructions(token string) map[string]string {
 		"connect": fmt.Sprintf("ch-ui connect --url <YOUR_SERVER_URL>/connect --key %s", token),
 		"service": fmt.Sprintf("ch-ui service install --url <YOUR_SERVER_URL>/connect --key %s", token),
 	}
-}
-
-// connJSON writes a JSON response.
-func connJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }

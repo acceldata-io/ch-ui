@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,7 +12,7 @@ import (
 // schemaVersion is the current database schema version. Bump it (date-based)
 // whenever schema-affecting migrations are added below. It is recorded in the
 // settings table after a successful migration run for upgrade observability.
-const schemaVersion = "2026.06.12"
+const schemaVersion = "2026.07.02"
 
 func (db *DB) runMigrations() error {
 	var prev string
@@ -36,6 +37,8 @@ func (db *DB) runMigrations() error {
 			name TEXT NOT NULL,
 			tunnel_token TEXT UNIQUE NOT NULL,
 			is_embedded INTEGER DEFAULT 0,
+			type TEXT NOT NULL DEFAULT 'tunnel',
+			clickhouse_url TEXT,
 			status TEXT DEFAULT 'disconnected',
 			last_seen_at TEXT,
 			host_info TEXT,
@@ -440,36 +443,6 @@ func (db *DB) runMigrations() error {
 		`CREATE INDEX IF NOT EXISTS idx_gov_qlog_user ON gov_query_log(connection_id, ch_user)`,
 		`CREATE INDEX IF NOT EXISTS idx_gov_qlog_hash ON gov_query_log(connection_id, normalized_hash)`,
 
-		// Governance lineage edges
-		`CREATE TABLE IF NOT EXISTS gov_lineage_edges (
-			id TEXT PRIMARY KEY,
-			connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
-			source_database TEXT NOT NULL,
-			source_table TEXT NOT NULL,
-			target_database TEXT NOT NULL,
-			target_table TEXT NOT NULL,
-			query_id TEXT,
-			ch_user TEXT,
-			edge_type TEXT NOT NULL,
-			detected_at TEXT NOT NULL,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_gov_lineage_conn ON gov_lineage_edges(connection_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_gov_lineage_src ON gov_lineage_edges(connection_id, source_database, source_table)`,
-		`CREATE INDEX IF NOT EXISTS idx_gov_lineage_tgt ON gov_lineage_edges(connection_id, target_database, target_table)`,
-
-		// Governance column-level lineage edges
-		`CREATE TABLE IF NOT EXISTS gov_lineage_column_edges (
-			id TEXT PRIMARY KEY,
-			lineage_edge_id TEXT NOT NULL REFERENCES gov_lineage_edges(id) ON DELETE CASCADE,
-			connection_id TEXT NOT NULL,
-			source_column TEXT NOT NULL,
-			target_column TEXT NOT NULL,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(lineage_edge_id, source_column, target_column)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_gov_col_lineage_edge ON gov_lineage_column_edges(lineage_edge_id)`,
-
 		// Governance sensitivity tags
 		`CREATE TABLE IF NOT EXISTS gov_tags (
 			id TEXT PRIMARY KEY,
@@ -681,31 +654,19 @@ func (db *DB) runMigrations() error {
 		`CREATE INDEX IF NOT EXISTS idx_alert_rule_enabled ON alert_rules(enabled)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_rule_event ON alert_rules(event_type, enabled)`,
 
-		// Rule routes map rules to channels and recipients
-		`CREATE TABLE IF NOT EXISTS alert_rule_routes (
+		// Rule channels bind rules directly to channels and recipients
+		`CREATE TABLE IF NOT EXISTS alert_rule_channels (
 			id TEXT PRIMARY KEY,
 			rule_id TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
 			channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
 			recipients_json TEXT NOT NULL,
 			is_active INTEGER DEFAULT 1,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(rule_id, channel_id)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_route_rule ON alert_rule_routes(rule_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_route_channel ON alert_rule_routes(channel_id)`,
-
-		// Per-route delivery policy (digest/escalation metadata)
-		`CREATE TABLE IF NOT EXISTS alert_route_policies (
-			route_id TEXT PRIMARY KEY REFERENCES alert_rule_routes(id) ON DELETE CASCADE,
-			delivery_mode TEXT NOT NULL DEFAULT 'immediate',
-			digest_window_minutes INTEGER NOT NULL DEFAULT 0,
-			escalation_channel_id TEXT REFERENCES alert_channels(id) ON DELETE SET NULL,
-			escalation_recipients_json TEXT,
-			escalation_after_failures INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_route_policy_delivery ON alert_route_policies(delivery_mode, digest_window_minutes)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rule_channel_rule ON alert_rule_channels(rule_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rule_channel_channel ON alert_rule_channels(channel_id)`,
 
 		// Alert events emitted by governance/scheduler/other subsystems
 		`CREATE TABLE IF NOT EXISTS alert_events (
@@ -726,13 +687,14 @@ func (db *DB) runMigrations() error {
 		`CREATE INDEX IF NOT EXISTS idx_alert_event_type ON alert_events(event_type, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_event_fingerprint ON alert_events(fingerprint, created_at)`,
 
-		// Dispatch jobs generated from events and routes
+		// Dispatch jobs generated from events and rule→channel bindings.
+		// Recipients are snapshotted onto the job at creation time.
 		`CREATE TABLE IF NOT EXISTS alert_dispatch_jobs (
 			id TEXT PRIMARY KEY,
 			event_id TEXT NOT NULL REFERENCES alert_events(id) ON DELETE CASCADE,
 			rule_id TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
-			route_id TEXT NOT NULL REFERENCES alert_rule_routes(id) ON DELETE CASCADE,
 			channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+			recipients_json TEXT NOT NULL DEFAULT '[]',
 			status TEXT NOT NULL DEFAULT 'queued',
 			attempt_count INTEGER DEFAULT 0,
 			max_attempts INTEGER DEFAULT 5,
@@ -745,33 +707,6 @@ func (db *DB) runMigrations() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_job_due ON alert_dispatch_jobs(status, next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_job_event ON alert_dispatch_jobs(event_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_job_route ON alert_dispatch_jobs(route_id)`,
-
-		// Digest windows for routes configured in digest mode
-		`CREATE TABLE IF NOT EXISTS alert_route_digests (
-			id TEXT PRIMARY KEY,
-			route_id TEXT NOT NULL REFERENCES alert_rule_routes(id) ON DELETE CASCADE,
-			rule_id TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
-			channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
-			bucket_start TEXT NOT NULL,
-			bucket_end TEXT NOT NULL,
-			event_type TEXT NOT NULL,
-			severity TEXT NOT NULL,
-			event_count INTEGER NOT NULL DEFAULT 0,
-			event_ids_json TEXT NOT NULL,
-			titles_json TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'collecting',
-			attempt_count INTEGER NOT NULL DEFAULT 0,
-			max_attempts INTEGER NOT NULL DEFAULT 5,
-			next_attempt_at TEXT NOT NULL,
-			last_error TEXT,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			sent_at TEXT,
-			UNIQUE(route_id, bucket_start, event_type, severity)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_digest_due ON alert_route_digests(status, next_attempt_at, bucket_end)`,
-		`CREATE INDEX IF NOT EXISTS idx_alert_digest_route ON alert_route_digests(route_id, bucket_start)`,
 
 		// ══════════════════════════════════════════════════════════════
 		// Pipeline tables (data ingestion pipelines)
@@ -985,6 +920,12 @@ func (db *DB) runMigrations() error {
 		return fmt.Errorf("migrate model_schedules anchor: %w", err)
 	}
 
+	// Migrate alert routing: rules now bind channels directly via
+	// alert_rule_channels; route policies/digests/escalation were removed.
+	if err := db.migrateAlertRoutesToRuleChannels(); err != nil {
+		return fmt.Errorf("migrate alert routes to rule channels: %w", err)
+	}
+
 	if err := db.ensureColumn("gov_policies", "enforcement_mode", "TEXT NOT NULL DEFAULT 'warn'"); err != nil {
 		return err
 	}
@@ -1043,6 +984,21 @@ func (db *DB) runMigrations() error {
 		return err
 	}
 
+	// Multi-connection: connections gain a type ('direct' runs an in-process
+	// connector against clickhouse_url; 'tunnel' waits for a remote agent).
+	if err := db.ensureColumn("connections", "type", "TEXT NOT NULL DEFAULT 'tunnel'"); err != nil {
+		return err
+	}
+	if err := db.ensureColumn("connections", "clickhouse_url", "TEXT"); err != nil {
+		return err
+	}
+	// Pre-existing embedded connections are direct by definition.
+	if _, err := db.conn.Exec(
+		"UPDATE connections SET type = 'direct' WHERE is_embedded = 1 AND type != 'direct'",
+	); err != nil {
+		return fmt.Errorf("backfill connection type: %w", err)
+	}
+
 	// Drop legacy tables from the old SaaS schema
 	dropLegacy := []string{
 		"DROP TABLE IF EXISTS organizations",
@@ -1060,6 +1016,17 @@ func (db *DB) runMigrations() error {
 	for _, stmt := range dropLegacy {
 		if _, err := db.conn.Exec(stmt); err != nil {
 			slog.Warn("Failed to drop legacy table", "error", err)
+		}
+	}
+
+	// Drop governance lineage tables (data-lineage feature removed)
+	dropLineage := []string{
+		"DROP TABLE IF EXISTS gov_lineage_column_edges",
+		"DROP TABLE IF EXISTS gov_lineage_edges",
+	}
+	for _, stmt := range dropLineage {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			slog.Warn("Failed to drop lineage table", "error", err)
 		}
 	}
 
@@ -1201,6 +1168,202 @@ func (db *DB) migrateModelSchedulesAnchor() error {
 	}
 
 	slog.Info("model_schedules migration complete")
+	return nil
+}
+
+// tableExists reports whether a table with the given name exists.
+func (db *DB) tableExists(name string) (bool, error) {
+	var count int
+	if err := db.conn.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name,
+	).Scan(&count); err != nil {
+		return false, fmt.Errorf("check table %s: %w", name, err)
+	}
+	return count > 0, nil
+}
+
+// columnExists reports whether the given table has the given column.
+func (db *DB) columnExists(tableName, columnName string) (bool, error) {
+	rows, err := db.conn.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return false, fmt.Errorf("inspect table %s columns: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("scan table info for %s: %w", tableName, err)
+		}
+		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(columnName)) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// migrateAlertRoutesToRuleChannels migrates the legacy alert routing schema
+// (alert_rule_routes + alert_route_policies + alert_route_digests) to the
+// direct rule→channel binding table (alert_rule_channels). Existing bindings
+// are preserved: recipients are merged per (rule_id, channel_id) pair, and
+// queued dispatch jobs keep their recipients (snapshotted from their route).
+// The legacy tables are dropped afterwards, mirroring the dropLegacy /
+// dropLineage patterns. Idempotent: a no-op when the legacy tables are gone.
+func (db *DB) migrateAlertRoutesToRuleChannels() error {
+	routesExist, err := db.tableExists("alert_rule_routes")
+	if err != nil {
+		return err
+	}
+
+	// 1) Copy rule→channel bindings out of alert_rule_routes.
+	if routesExist {
+		slog.Info("Migrating alert_rule_routes to alert_rule_channels")
+
+		type binding struct {
+			recipients []string
+			seen       map[string]bool
+			isActive   bool
+			createdAt  string
+		}
+		order := make([]string, 0)
+		merged := make(map[string]*binding)
+
+		rows, err := db.conn.Query(
+			`SELECT rule_id, channel_id, recipients_json, is_active, created_at
+			 FROM alert_rule_routes ORDER BY created_at ASC`,
+		)
+		if err != nil {
+			return fmt.Errorf("read legacy alert routes: %w", err)
+		}
+		for rows.Next() {
+			var ruleID, channelID, recipientsJSON, createdAt string
+			var isActive int
+			if err := rows.Scan(&ruleID, &channelID, &recipientsJSON, &isActive, &createdAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan legacy alert route: %w", err)
+			}
+			key := ruleID + "\x00" + channelID
+			b, ok := merged[key]
+			if !ok {
+				b = &binding{seen: map[string]bool{}, createdAt: createdAt}
+				merged[key] = b
+				order = append(order, key)
+			}
+			for _, r := range parseRecipientsJSON(recipientsJSON) {
+				if !b.seen[r] {
+					b.seen[r] = true
+					b.recipients = append(b.recipients, r)
+				}
+			}
+			if isActive != 0 {
+				b.isActive = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("iterate legacy alert routes: %w", err)
+		}
+		rows.Close()
+
+		now := "CURRENT_TIMESTAMP"
+		for _, key := range order {
+			b := merged[key]
+			sep := strings.IndexByte(key, 0)
+			ruleID, channelID := key[:sep], key[sep+1:]
+			recipientsJSON, _ := json.Marshal(b.recipients)
+			if _, err := db.conn.Exec(
+				`INSERT INTO alert_rule_channels (id, rule_id, channel_id, recipients_json, is_active, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, `+now+`)
+				 ON CONFLICT(rule_id, channel_id) DO NOTHING`,
+				uuid.NewString(), ruleID, channelID, string(recipientsJSON), boolToInt(b.isActive), b.createdAt,
+			); err != nil {
+				return fmt.Errorf("insert alert rule channel binding: %w", err)
+			}
+		}
+	}
+
+	// 2) Rebuild alert_dispatch_jobs without route_id, snapshotting each job's
+	// recipients from its legacy route.
+	hasRouteID, err := db.columnExists("alert_dispatch_jobs", "route_id")
+	if err != nil {
+		return err
+	}
+	if hasRouteID {
+		slog.Info("Rebuilding alert_dispatch_jobs without route_id")
+
+		if _, err := db.conn.Exec(`CREATE TABLE alert_dispatch_jobs_new (
+			id TEXT PRIMARY KEY,
+			event_id TEXT NOT NULL REFERENCES alert_events(id) ON DELETE CASCADE,
+			rule_id TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+			channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+			recipients_json TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL DEFAULT 'queued',
+			attempt_count INTEGER DEFAULT 0,
+			max_attempts INTEGER DEFAULT 5,
+			next_attempt_at TEXT NOT NULL,
+			last_error TEXT,
+			provider_message_id TEXT,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			sent_at TEXT
+		)`); err != nil {
+			return fmt.Errorf("create new alert_dispatch_jobs: %w", err)
+		}
+
+		copySQL := `INSERT INTO alert_dispatch_jobs_new
+			(id, event_id, rule_id, channel_id, recipients_json, status, attempt_count, max_attempts,
+			 next_attempt_at, last_error, provider_message_id, created_at, updated_at, sent_at)
+			SELECT j.id, j.event_id, j.rule_id, j.channel_id, '[]', j.status, j.attempt_count, j.max_attempts,
+			       j.next_attempt_at, j.last_error, j.provider_message_id, j.created_at, j.updated_at, j.sent_at
+			FROM alert_dispatch_jobs j`
+		if routesExist {
+			copySQL = `INSERT INTO alert_dispatch_jobs_new
+			(id, event_id, rule_id, channel_id, recipients_json, status, attempt_count, max_attempts,
+			 next_attempt_at, last_error, provider_message_id, created_at, updated_at, sent_at)
+			SELECT j.id, j.event_id, j.rule_id, j.channel_id, COALESCE(rr.recipients_json, '[]'),
+			       j.status, j.attempt_count, j.max_attempts,
+			       j.next_attempt_at, j.last_error, j.provider_message_id, j.created_at, j.updated_at, j.sent_at
+			FROM alert_dispatch_jobs j
+			LEFT JOIN alert_rule_routes rr ON rr.id = j.route_id`
+		}
+		if _, err := db.conn.Exec(copySQL); err != nil {
+			return fmt.Errorf("copy alert dispatch jobs: %w", err)
+		}
+
+		if _, err := db.conn.Exec("DROP TABLE alert_dispatch_jobs"); err != nil {
+			return fmt.Errorf("drop old alert_dispatch_jobs: %w", err)
+		}
+		if _, err := db.conn.Exec("ALTER TABLE alert_dispatch_jobs_new RENAME TO alert_dispatch_jobs"); err != nil {
+			return fmt.Errorf("rename alert_dispatch_jobs: %w", err)
+		}
+		for _, stmt := range []string{
+			"CREATE INDEX IF NOT EXISTS idx_alert_job_due ON alert_dispatch_jobs(status, next_attempt_at)",
+			"CREATE INDEX IF NOT EXISTS idx_alert_job_event ON alert_dispatch_jobs(event_id)",
+		} {
+			if _, err := db.conn.Exec(stmt); err != nil {
+				return fmt.Errorf("recreate alert_dispatch_jobs index: %w", err)
+			}
+		}
+	}
+
+	// 3) Drop the legacy routing tables (children first).
+	dropRoutes := []string{
+		"DROP TABLE IF EXISTS alert_route_digests",
+		"DROP TABLE IF EXISTS alert_route_policies",
+		"DROP TABLE IF EXISTS alert_rule_routes",
+	}
+	for _, stmt := range dropRoutes {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			slog.Warn("Failed to drop legacy alert routing table", "error", err)
+		}
+	}
+
+	if routesExist || hasRouteID {
+		slog.Info("Alert routing migration complete")
+	}
 	return nil
 }
 

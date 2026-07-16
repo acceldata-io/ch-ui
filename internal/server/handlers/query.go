@@ -1975,23 +1975,6 @@ func (h *QueryHandler) ListCompletions(w http.ResponseWriter, r *http.Request) {
 
 // --- Helpers ---
 
-// writeJSON writes a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-// writeError writes a JSON error response.
-func writeError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": false,
-		"error":   message,
-	})
-}
-
 func (h *QueryHandler) guardrailsEnabled() bool {
 	if h.Guardrails == nil {
 		return false
@@ -2096,6 +2079,10 @@ func isReadOnlyQuery(query string) bool {
 	return re.MatchString(query)
 }
 
+// requireSchemaAdmin gates schema-modification routes on the session's
+// resolved role (SessionInfo.UserRole) rather than a raw
+// db.IsUserRole(session.ClickhouseUser, "admin") lookup — see the identical
+// fix and rationale on middleware.RequireAdmin.
 func (h *QueryHandler) requireSchemaAdmin(w http.ResponseWriter, r *http.Request) *middleware.SessionInfo {
 	session := middleware.GetSession(r)
 	if session == nil {
@@ -2103,12 +2090,7 @@ func (h *QueryHandler) requireSchemaAdmin(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 
-	isAdmin, err := h.DB.IsUserRole(session.ClickhouseUser, "admin")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Role check failed")
-		return nil
-	}
-	if !isAdmin {
+	if session.UserRole != "admin" {
 		writeError(w, http.StatusForbidden, "Admin role required for schema changes")
 		return nil
 	}

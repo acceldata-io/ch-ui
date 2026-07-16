@@ -11,7 +11,7 @@ LDFLAGS = -s -w \
 
 BINARY = ch-ui
 
-.PHONY: app build rebuild from-scratch build-frontend build-go dev test clean tidy vet help
+.PHONY: app build rebuild from-scratch build-frontend build-go dev test clean tidy vet help demo demo-down demo-logs demo-bootstrap
 
 ## app: Build frontend + Go binary (production-ready)
 app: build-frontend build-go
@@ -58,6 +58,23 @@ tidy:
 ## vet: Run go vet
 vet:
 	go vet ./...
+
+## demo: Start the SSO/audit demo stack (ClickHouse + Keycloak + ch-ui) and bootstrap it
+demo:
+	docker compose -f demo/docker-compose.demo.yml up -d --build
+	@$(MAKE) demo-bootstrap
+
+## demo-bootstrap: Re-run the demo's post-startup setup (admin login, SSO account, license)
+demo-bootstrap:
+	bash demo/scripts/bootstrap.sh
+
+## demo-logs: Tail logs from the demo stack
+demo-logs:
+	docker compose -f demo/docker-compose.demo.yml logs -f
+
+## demo-down: Tear down the demo stack and remove its volumes (clean slate)
+demo-down:
+	docker compose -f demo/docker-compose.demo.yml down -v
 
 ## help: Show this help message
 help:

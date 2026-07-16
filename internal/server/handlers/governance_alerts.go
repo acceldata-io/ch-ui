@@ -24,27 +24,22 @@ import (
 
 var emailRegex = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-type alertRuleRoutePayload struct {
-	ChannelID               string   `json:"channel_id"`
-	Recipients              []string `json:"recipients"`
-	IsActive                *bool    `json:"is_active"`
-	DeliveryMode            string   `json:"delivery_mode"`
-	DigestWindowMinutes     *int     `json:"digest_window_minutes"`
-	EscalationChannelID     *string  `json:"escalation_channel_id"`
-	EscalationRecipients    []string `json:"escalation_recipients"`
-	EscalationAfterFailures *int     `json:"escalation_after_failures"`
+type alertRuleChannelPayload struct {
+	ChannelID  string   `json:"channel_id"`
+	Recipients []string `json:"recipients"`
+	IsActive   *bool    `json:"is_active"`
 }
 
 type alertRuleResponse struct {
 	database.AlertRule
-	Routes []database.AlertRuleRouteView `json:"routes"`
+	Channels []database.AlertRuleChannelView `json:"channels"`
 }
 
 func (h *GovernanceHandler) ListAlertChannels(w http.ResponseWriter, r *http.Request) {
 	channels, err := h.DB.ListAlertChannels()
 	if err != nil {
 		slog.Error("Failed to list alert channels", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list alert channels"})
+		writeError(w, http.StatusInternalServerError, "Failed to list alert channels")
 		return
 	}
 
@@ -80,7 +75,7 @@ func (h *GovernanceHandler) ListAlertChannels(w http.ResponseWriter, r *http.Req
 func (h *GovernanceHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -91,22 +86,22 @@ func (h *GovernanceHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Re
 		IsActive    *bool                  `json:"is_active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	channelType := strings.ToLower(strings.TrimSpace(body.ChannelType))
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	if !isSupportedChannelType(channelType) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel_type must be smtp, resend, or brevo"})
+		writeError(w, http.StatusBadRequest, "channel_type must be smtp, resend, or brevo")
 		return
 	}
 	if err := validateChannelConfig(channelType, body.Config, false); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -114,7 +109,7 @@ func (h *GovernanceHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Re
 	encrypted, err := crypto.Encrypt(string(rawConfig), h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to encrypt alert channel config", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to store alert channel config"})
+		writeError(w, http.StatusInternalServerError, "Failed to store alert channel config")
 		return
 	}
 
@@ -126,7 +121,7 @@ func (h *GovernanceHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Re
 	id, err := h.DB.CreateAlertChannel(name, channelType, encrypted, isActive, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create alert channel", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to create alert channel")
 		return
 	}
 
@@ -143,7 +138,7 @@ func (h *GovernanceHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Re
 func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -151,11 +146,11 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 	channel, err := h.DB.GetAlertChannelByID(id)
 	if err != nil {
 		slog.Error("Failed to load alert channel", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to load alert channel")
 		return
 	}
 	if channel == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert channel not found"})
+		writeError(w, http.StatusNotFound, "Alert channel not found")
 		return
 	}
 
@@ -166,7 +161,7 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 		IsActive    *bool                  `json:"is_active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -179,11 +174,11 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 		channelType = strings.ToLower(strings.TrimSpace(*body.ChannelType))
 	}
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	if !isSupportedChannelType(channelType) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel_type must be smtp, resend, or brevo"})
+		writeError(w, http.StatusBadRequest, "channel_type must be smtp, resend, or brevo")
 		return
 	}
 
@@ -195,14 +190,14 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 	var encryptedConfig *string
 	if body.Config != nil {
 		if err := validateChannelConfig(channelType, body.Config, true); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		rawConfig, _ := json.Marshal(body.Config)
 		enc, err := crypto.Encrypt(string(rawConfig), h.Config.AppSecretKey)
 		if err != nil {
 			slog.Error("Failed to encrypt alert channel config", "id", id, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to store alert channel config"})
+			writeError(w, http.StatusInternalServerError, "Failed to store alert channel config")
 			return
 		}
 		encryptedConfig = &enc
@@ -210,7 +205,7 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 
 	if err := h.DB.UpdateAlertChannel(id, name, channelType, encryptedConfig, isActive); err != nil {
 		slog.Error("Failed to update alert channel", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to update alert channel")
 		return
 	}
 
@@ -227,24 +222,24 @@ func (h *GovernanceHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Re
 func (h *GovernanceHandler) DeleteAlertChannel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	channel, err := h.DB.GetAlertChannelByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to load alert channel")
 		return
 	}
 	if channel == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert channel not found"})
+		writeError(w, http.StatusNotFound, "Alert channel not found")
 		return
 	}
 
 	if err := h.DB.DeleteAlertChannel(id); err != nil {
 		slog.Error("Failed to delete alert channel", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete alert channel")
 		return
 	}
 
@@ -262,11 +257,11 @@ func (h *GovernanceHandler) TestAlertChannel(w http.ResponseWriter, r *http.Requ
 	id := chi.URLParam(r, "id")
 	channel, err := h.DB.GetAlertChannelByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load alert channel"})
+		writeError(w, http.StatusInternalServerError, "Failed to load alert channel")
 		return
 	}
 	if channel == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert channel not found"})
+		writeError(w, http.StatusNotFound, "Alert channel not found")
 		return
 	}
 
@@ -276,23 +271,23 @@ func (h *GovernanceHandler) TestAlertChannel(w http.ResponseWriter, r *http.Requ
 		Message    string   `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	recipients, err := validateRecipients(body.Recipients)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	decrypted, err := crypto.Decrypt(channel.ConfigEncrypted, h.Config.AppSecretKey)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt alert channel config"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt alert channel config")
 		return
 	}
 	cfg := map[string]interface{}{}
 	if err := json.Unmarshal([]byte(decrypted), &cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to parse alert channel config"})
+		writeError(w, http.StatusInternalServerError, "Failed to parse alert channel config")
 		return
 	}
 
@@ -307,7 +302,7 @@ func (h *GovernanceHandler) TestAlertChannel(w http.ResponseWriter, r *http.Requ
 
 	msgID, err := alerts.SendDirect(context.Background(), channel.ChannelType, cfg, recipients, subject, message)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -318,20 +313,20 @@ func (h *GovernanceHandler) ListAlertRules(w http.ResponseWriter, r *http.Reques
 	rules, err := h.DB.ListAlertRules()
 	if err != nil {
 		slog.Error("Failed to list alert rules", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list alert rules"})
+		writeError(w, http.StatusInternalServerError, "Failed to list alert rules")
 		return
 	}
 
 	out := make([]alertRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		routes, err := h.DB.ListAlertRuleRoutes(rule.ID)
+		channels, err := h.DB.ListAlertRuleChannels(rule.ID)
 		if err != nil {
-			slog.Warn("Failed to load alert rule routes", "rule", rule.ID, "error", err)
-			routes = []database.AlertRuleRouteView{}
+			slog.Warn("Failed to load alert rule channels", "rule", rule.ID, "error", err)
+			channels = []database.AlertRuleChannelView{}
 		}
 		out = append(out, alertRuleResponse{
 			AlertRule: rule,
-			Routes:    routes,
+			Channels:  channels,
 		})
 	}
 
@@ -341,23 +336,23 @@ func (h *GovernanceHandler) ListAlertRules(w http.ResponseWriter, r *http.Reques
 func (h *GovernanceHandler) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	var body struct {
-		Name            string                  `json:"name"`
-		EventType       string                  `json:"event_type"`
-		SeverityMin     string                  `json:"severity_min"`
-		Enabled         *bool                   `json:"enabled"`
-		CooldownSeconds *int                    `json:"cooldown_seconds"`
-		MaxAttempts     *int                    `json:"max_attempts"`
-		SubjectTemplate string                  `json:"subject_template"`
-		BodyTemplate    string                  `json:"body_template"`
-		Routes          []alertRuleRoutePayload `json:"routes"`
+		Name            string                    `json:"name"`
+		EventType       string                    `json:"event_type"`
+		SeverityMin     string                    `json:"severity_min"`
+		Enabled         *bool                     `json:"enabled"`
+		CooldownSeconds *int                      `json:"cooldown_seconds"`
+		MaxAttempts     *int                      `json:"max_attempts"`
+		SubjectTemplate string                    `json:"subject_template"`
+		BodyTemplate    string                    `json:"body_template"`
+		Channels        []alertRuleChannelPayload `json:"channels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -365,15 +360,15 @@ func (h *GovernanceHandler) CreateAlertRule(w http.ResponseWriter, r *http.Reque
 	eventType := strings.ToLower(strings.TrimSpace(body.EventType))
 	severityMin := strings.ToLower(strings.TrimSpace(body.SeverityMin))
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	if !isSupportedEventType(eventType) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "event_type must be policy.violation, schedule.failed, schedule.slow, or *"})
+		writeError(w, http.StatusBadRequest, "event_type must be policy.violation, schedule.failed, schedule.slow, or *")
 		return
 	}
 	if !isSupportedSeverity(severityMin) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "severity_min must be info, warn, error, or critical"})
+		writeError(w, http.StatusBadRequest, "severity_min must be info, warn, error, or critical")
 		return
 	}
 
@@ -390,23 +385,23 @@ func (h *GovernanceHandler) CreateAlertRule(w http.ResponseWriter, r *http.Reque
 		maxAttempts = *body.MaxAttempts
 	}
 
-	routes, err := h.validateRuleRoutes(body.Routes)
+	channels, err := h.validateRuleChannels(body.Channels)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	id, err := h.DB.CreateAlertRule(name, eventType, severityMin, enabled, cooldownSeconds, maxAttempts, body.SubjectTemplate, body.BodyTemplate, session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create alert rule", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create alert rule"})
+		writeError(w, http.StatusInternalServerError, "Failed to create alert rule")
 		return
 	}
 
-	if err := h.DB.ReplaceAlertRuleRoutes(id, routes); err != nil {
+	if err := h.DB.ReplaceAlertRuleChannels(id, channels); err != nil {
 		_ = h.DB.DeleteAlertRule(id)
-		slog.Error("Failed to create alert rule routes", "rule", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create alert rule routes"})
+		slog.Error("Failed to create alert rule channels", "rule", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "Failed to create alert rule channels")
 		return
 	}
 
@@ -423,34 +418,34 @@ func (h *GovernanceHandler) CreateAlertRule(w http.ResponseWriter, r *http.Reque
 func (h *GovernanceHandler) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	existing, err := h.DB.GetAlertRuleByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load alert rule"})
+		writeError(w, http.StatusInternalServerError, "Failed to load alert rule")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert rule not found"})
+		writeError(w, http.StatusNotFound, "Alert rule not found")
 		return
 	}
 
 	var body struct {
-		Name            *string                  `json:"name"`
-		EventType       *string                  `json:"event_type"`
-		SeverityMin     *string                  `json:"severity_min"`
-		Enabled         *bool                    `json:"enabled"`
-		CooldownSeconds *int                     `json:"cooldown_seconds"`
-		MaxAttempts     *int                     `json:"max_attempts"`
-		SubjectTemplate *string                  `json:"subject_template"`
-		BodyTemplate    *string                  `json:"body_template"`
-		Routes          *[]alertRuleRoutePayload `json:"routes"`
+		Name            *string                    `json:"name"`
+		EventType       *string                    `json:"event_type"`
+		SeverityMin     *string                    `json:"severity_min"`
+		Enabled         *bool                      `json:"enabled"`
+		CooldownSeconds *int                       `json:"cooldown_seconds"`
+		MaxAttempts     *int                       `json:"max_attempts"`
+		SubjectTemplate *string                    `json:"subject_template"`
+		BodyTemplate    *string                    `json:"body_template"`
+		Channels        *[]alertRuleChannelPayload `json:"channels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -482,33 +477,33 @@ func (h *GovernanceHandler) UpdateAlertRule(w http.ResponseWriter, r *http.Reque
 	bodyTemplate := coalesceStringPtr(body.BodyTemplate, existing.BodyTemplate)
 
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	if !isSupportedEventType(eventType) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "event_type must be policy.violation, schedule.failed, schedule.slow, or *"})
+		writeError(w, http.StatusBadRequest, "event_type must be policy.violation, schedule.failed, schedule.slow, or *")
 		return
 	}
 	if !isSupportedSeverity(severityMin) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "severity_min must be info, warn, error, or critical"})
+		writeError(w, http.StatusBadRequest, "severity_min must be info, warn, error, or critical")
 		return
 	}
 
 	if err := h.DB.UpdateAlertRule(id, name, eventType, severityMin, enabled, cooldownSeconds, maxAttempts, subjectTemplate, bodyTemplate); err != nil {
 		slog.Error("Failed to update alert rule", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update alert rule"})
+		writeError(w, http.StatusInternalServerError, "Failed to update alert rule")
 		return
 	}
 
-	if body.Routes != nil {
-		routes, err := h.validateRuleRoutes(*body.Routes)
+	if body.Channels != nil {
+		channels, err := h.validateRuleChannels(*body.Channels)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := h.DB.ReplaceAlertRuleRoutes(id, routes); err != nil {
-			slog.Error("Failed to replace alert rule routes", "rule", id, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update alert rule routes"})
+		if err := h.DB.ReplaceAlertRuleChannels(id, channels); err != nil {
+			slog.Error("Failed to replace alert rule channels", "rule", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "Failed to update alert rule channels")
 			return
 		}
 	}
@@ -526,23 +521,23 @@ func (h *GovernanceHandler) UpdateAlertRule(w http.ResponseWriter, r *http.Reque
 func (h *GovernanceHandler) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	existing, err := h.DB.GetAlertRuleByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load alert rule"})
+		writeError(w, http.StatusInternalServerError, "Failed to load alert rule")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert rule not found"})
+		writeError(w, http.StatusNotFound, "Alert rule not found")
 		return
 	}
 	if err := h.DB.DeleteAlertRule(id); err != nil {
 		slog.Error("Failed to delete alert rule", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete alert rule"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete alert rule")
 		return
 	}
 
@@ -568,19 +563,24 @@ func (h *GovernanceHandler) ListAlertEvents(w http.ResponseWriter, r *http.Reque
 	events, err := h.DB.ListAlertEvents(limit, eventType, status)
 	if err != nil {
 		slog.Error("Failed to list alert events", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list alert events"})
+		writeError(w, http.StatusInternalServerError, "Failed to list alert events")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"events": events})
 }
 
-func (h *GovernanceHandler) validateRuleRoutes(payload []alertRuleRoutePayload) ([]database.AlertRuleRoute, error) {
-	routes := make([]database.AlertRuleRoute, 0, len(payload))
+func (h *GovernanceHandler) validateRuleChannels(payload []alertRuleChannelPayload) ([]database.AlertRuleChannel, error) {
+	channels := make([]database.AlertRuleChannel, 0, len(payload))
+	seen := make(map[string]bool, len(payload))
 	for _, item := range payload {
 		channelID := strings.TrimSpace(item.ChannelID)
 		if channelID == "" {
-			return nil, fmt.Errorf("route channel_id is required")
+			return nil, fmt.Errorf("channel_id is required")
 		}
+		if seen[channelID] {
+			return nil, fmt.Errorf("channel %s is listed more than once", channelID)
+		}
+		seen[channelID] = true
 		channel, err := h.DB.GetAlertChannelByID(channelID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load channel %s", channelID)
@@ -590,68 +590,19 @@ func (h *GovernanceHandler) validateRuleRoutes(payload []alertRuleRoutePayload) 
 		}
 		recipients, err := validateRecipients(item.Recipients)
 		if err != nil {
-			return nil, fmt.Errorf("route channel %s: %w", channelID, err)
+			return nil, fmt.Errorf("channel %s: %w", channelID, err)
 		}
 		active := true
 		if item.IsActive != nil {
 			active = *item.IsActive
 		}
-		deliveryMode := strings.ToLower(strings.TrimSpace(item.DeliveryMode))
-		if deliveryMode == "" {
-			deliveryMode = "immediate"
-		}
-		if deliveryMode != "immediate" && deliveryMode != "digest" {
-			return nil, fmt.Errorf("route channel %s: delivery_mode must be immediate or digest", channelID)
-		}
-		digestWindow := 0
-		if item.DigestWindowMinutes != nil {
-			digestWindow = *item.DigestWindowMinutes
-		}
-		if digestWindow < 0 || digestWindow > 1440 {
-			return nil, fmt.Errorf("route channel %s: digest_window_minutes must be between 0 and 1440", channelID)
-		}
-		if deliveryMode == "digest" && digestWindow == 0 {
-			digestWindow = 15
-		}
-
-		var escalationChannelID *string
-		if item.EscalationChannelID != nil && strings.TrimSpace(*item.EscalationChannelID) != "" {
-			escID := strings.TrimSpace(*item.EscalationChannelID)
-			escalationChannel, err := h.DB.GetAlertChannelByID(escID)
-			if err != nil {
-				return nil, fmt.Errorf("route channel %s: failed to load escalation channel %s", channelID, escID)
-			}
-			if escalationChannel == nil {
-				return nil, fmt.Errorf("route channel %s: escalation channel %s not found", channelID, escID)
-			}
-			escalationChannelID = &escID
-		}
-		escalationRecipients := []string{}
-		if len(item.EscalationRecipients) > 0 {
-			escalationRecipients, err = validateRecipients(item.EscalationRecipients)
-			if err != nil {
-				return nil, fmt.Errorf("route channel %s escalation_recipients: %w", channelID, err)
-			}
-		}
-		escalationAfterFailures := 0
-		if item.EscalationAfterFailures != nil {
-			escalationAfterFailures = *item.EscalationAfterFailures
-		}
-		if escalationAfterFailures < 0 || escalationAfterFailures > 10 {
-			return nil, fmt.Errorf("route channel %s: escalation_after_failures must be between 0 and 10", channelID)
-		}
-		routes = append(routes, database.AlertRuleRoute{
-			ChannelID:               channelID,
-			Recipients:              recipients,
-			IsActive:                active,
-			DeliveryMode:            deliveryMode,
-			DigestWindowMinutes:     digestWindow,
-			EscalationChannelID:     escalationChannelID,
-			EscalationRecipients:    escalationRecipients,
-			EscalationAfterFailures: escalationAfterFailures,
+		channels = append(channels, database.AlertRuleChannel{
+			ChannelID:  channelID,
+			Recipients: recipients,
+			IsActive:   active,
 		})
 	}
-	return routes, nil
+	return channels, nil
 }
 
 func sanitizeChannelConfig(channelType string, cfg map[string]interface{}) (map[string]interface{}, bool) {

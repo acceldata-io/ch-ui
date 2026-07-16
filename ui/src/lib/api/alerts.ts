@@ -3,15 +3,10 @@ import type { AlertChannel, AlertEvent, AlertRule } from '../types/alerts'
 
 const BASE = '/api/governance/alerts'
 
-export type AlertRuleRoutePayload = {
+export type AlertRuleChannelPayload = {
   channel_id: string
   recipients: string[]
   is_active: boolean
-  delivery_mode?: 'immediate' | 'digest'
-  digest_window_minutes?: number
-  escalation_channel_id?: string
-  escalation_recipients?: string[]
-  escalation_after_failures?: number
 }
 
 export async function adminListAlertChannels(): Promise<AlertChannel[]> {
@@ -63,7 +58,7 @@ export async function adminCreateAlertRule(payload: {
   max_attempts: number
   subject_template?: string
   body_template?: string
-  routes: AlertRuleRoutePayload[]
+  channels: AlertRuleChannelPayload[]
 }): Promise<void> {
   await apiPost(`${BASE}/rules`, payload)
 }
@@ -77,7 +72,7 @@ export async function adminUpdateAlertRule(id: string, payload: {
   max_attempts?: number
   subject_template?: string
   body_template?: string
-  routes?: AlertRuleRoutePayload[]
+  channels?: AlertRuleChannelPayload[]
 }): Promise<void> {
   await apiPut(`${BASE}/rules/${encodeURIComponent(id)}`, payload)
 }

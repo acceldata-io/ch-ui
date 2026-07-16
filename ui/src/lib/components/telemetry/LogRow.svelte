@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SEVERITY_COLORS, type SeverityLevel } from '../../types/telemetry'
   import type { LogEntry } from '../../types/telemetry'
+  import { formatTime } from '../../utils/format'
   import { ChevronRight, ChevronDown } from 'lucide-svelte'
 
   interface Props {
@@ -13,15 +14,7 @@
 
   const severityColor = $derived(SEVERITY_COLORS[entry.SeverityText as SeverityLevel] ?? '#6b7280')
 
-  function formatTimestamp(ts: string): string {
-    try {
-      const d = new Date(ts)
-      return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
-    } catch {
-      return ts
-    }
-  }
-
+  // Short "MMM d" date is specific to compact log rows; the shared formatDate renders full date+time.
   function formatDate(ts: string): string {
     try {
       const d = new Date(ts)
@@ -62,7 +55,7 @@
 
     <span class="text-[11px] font-mono text-gray-400 dark:text-gray-500 shrink-0 tabular-nums whitespace-nowrap">
       <span class="text-gray-300 dark:text-gray-600">{formatDate(entry.Timestamp)}</span>
-      {formatTimestamp(entry.Timestamp)}
+      {formatTime(entry.Timestamp, { ms: true })}
     </span>
 
     <span

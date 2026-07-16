@@ -51,9 +51,7 @@ func IPRateLimit(limit int, window time.Duration) func(http.Handler) http.Handle
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !rl.allow(clientIP(r)) {
 				w.Header().Set("Retry-After", "60")
-				writeJSON(w, http.StatusTooManyRequests, map[string]string{
-					"error": "Rate limit exceeded. Please slow down.",
-				})
+				writeError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please slow down.")
 				return
 			}
 			next.ServeHTTP(w, r)

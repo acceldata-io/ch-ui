@@ -14,7 +14,7 @@ export interface AlertChannel {
   has_secret: boolean
 }
 
-export interface AlertRuleRoute {
+export interface AlertRuleChannelBinding {
   id: string
   rule_id: string
   channel_id: string
@@ -22,13 +22,6 @@ export interface AlertRuleRoute {
   channel_type: AlertChannelType
   recipients: string[]
   is_active: boolean
-  delivery_mode: 'immediate' | 'digest' | string
-  digest_window_minutes: number
-  escalation_channel_id?: string | null
-  escalation_channel_name?: string | null
-  escalation_channel_type?: AlertChannelType | string | null
-  escalation_recipients: string[]
-  escalation_after_failures: number
   created_at: string
   updated_at: string
 }
@@ -46,7 +39,7 @@ export interface AlertRule {
   created_by?: string | null
   created_at: string
   updated_at: string
-  routes: AlertRuleRoute[]
+  channels: AlertRuleChannelBinding[]
 }
 
 export interface AlertEvent {

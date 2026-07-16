@@ -9,11 +9,46 @@ import (
 
 // Setting keys for governance features.
 const (
-	SettingGovernanceSyncEnabled   = "governance.sync_enabled"
-	SettingGovernanceUpgradeBanner = "governance.upgrade_banner_dismissed"
-	SettingGovernanceSyncUpdatedBy = "governance.sync_updated_by"
-	SettingGovernanceSyncUpdatedAt = "governance.sync_updated_at"
+	SettingGovernanceSyncEnabled     = "governance.sync_enabled"
+	SettingGovernanceUpgradeBanner   = "governance.upgrade_banner_dismissed"
+	SettingGovernanceSyncUpdatedBy   = "governance.sync_updated_by"
+	SettingGovernanceSyncUpdatedAt   = "governance.sync_updated_at"
+	SettingGovernanceQueryHarvestKey = "governance.query_harvest_mode"
 )
+
+// Query harvest modes: "auto" harvests a connection's query log only when at
+// least one policy exists for it, "always" harvests unconditionally, "off"
+// disables query-log harvesting.
+const (
+	QueryHarvestModeAuto   = "auto"
+	QueryHarvestModeAlways = "always"
+	QueryHarvestModeOff    = "off"
+)
+
+// QueryHarvestMode returns the configured query-harvest mode, defaulting to
+// "auto" when unset or invalid.
+func (db *DB) QueryHarvestMode() string {
+	v, _ := db.GetSetting(SettingGovernanceQueryHarvestKey)
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case QueryHarvestModeAlways:
+		return QueryHarvestModeAlways
+	case QueryHarvestModeOff:
+		return QueryHarvestModeOff
+	default:
+		return QueryHarvestModeAuto
+	}
+}
+
+// SetQueryHarvestMode validates and persists the query-harvest mode.
+func (db *DB) SetQueryHarvestMode(mode string) error {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case QueryHarvestModeAuto, QueryHarvestModeAlways, QueryHarvestModeOff:
+		return db.SetSetting(SettingGovernanceQueryHarvestKey, mode)
+	default:
+		return fmt.Errorf("query_harvest_mode must be auto, always, or off")
+	}
+}
 
 // GovernanceSyncEnabled reports whether admins have opted in to the governance
 // background sync. Unset keys default to false (opt-in semantics).

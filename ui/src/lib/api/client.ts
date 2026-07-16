@@ -1,6 +1,16 @@
 import { withBase } from '../basePath'
 import { safeParse } from '../utils/safe-json'
 
+/** Error carrying the HTTP status so callers can branch on 403/502/503 etc. */
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 /** Base fetch wrapper with credentials and error handling */
 async function parseResponseBody(res: Response): Promise<any> {
   const contentType = (res.headers.get('content-type') || '').toLowerCase()
@@ -58,11 +68,11 @@ async function request<T = unknown>(
   }
 
   if (res.status === 402) {
-    throw new Error(buildErrorMessage(res.status, body) || 'Pro license required')
+    throw new ApiError(buildErrorMessage(res.status, body) || 'Pro license required', res.status)
   }
 
   if (!res.ok || (body && body.success === false)) {
-    throw new Error(buildErrorMessage(res.status, body))
+    throw new ApiError(buildErrorMessage(res.status, body), res.status)
   }
 
   return body as T

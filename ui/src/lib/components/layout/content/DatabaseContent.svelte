@@ -3,7 +3,7 @@
   import type { DatabaseTab } from '../../../stores/tabs.svelte'
   import type { ColumnMeta } from '../../../types/query'
   import { fetchDatabaseInfo, fetchDatabaseTables } from '../../../api/query'
-  import { formatBytes, formatNumber } from '../../../utils/format'
+  import { formatBytes, formatDate, formatNumber } from '../../../utils/format'
   import Spinner from '../../common/Spinner.svelte'
   import VirtualTable from '../../table/VirtualTable.svelte'
   import { Database, HardDrive, Rows3, Table2, Clock, RefreshCw, FolderOpen } from 'lucide-svelte'
@@ -41,13 +41,6 @@
       { label: 'Engine', value: dbInfo.engine ?? '—', icon: Database, color: 'text-gray-500' },
     ]
   })
-
-  function formatDate(value: unknown): string {
-    if (!value) return '—'
-    const date = new Date(String(value))
-    if (Number.isNaN(date.getTime())) return String(value)
-    return date.toLocaleString()
-  }
 
   async function loadInfo() {
     infoLoading = true

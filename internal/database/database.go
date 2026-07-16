@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,6 +29,11 @@ type DB struct {
 	// server uses it to forward events to external sinks (SIEM). It must not
 	// block; forwarding is handled asynchronously inside the callback.
 	OnAudit func(AuditLogParams)
+
+	// retentionStats holds the outcome of the most recent data retention run
+	// (see retention.go). Guarded by retentionMu.
+	retentionMu    sync.Mutex
+	retentionStats RetentionStats
 }
 
 // Open opens the SQLite database at the given path, runs migrations, and returns a DB.
@@ -40,7 +46,11 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
-	dsn := fmt.Sprintf("%s?_pragma=foreign_keys(1)&_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)", path)
+	// auto_vacuum=INCREMENTAL lets the retention job reclaim freed pages via
+	// PRAGMA incremental_vacuum. It only takes effect on newly created
+	// databases (or after a full VACUUM); on existing databases it is a no-op.
+	// It must be set before the first table is created, hence in the DSN.
+	dsn := fmt.Sprintf("%s?_pragma=auto_vacuum(INCREMENTAL)&_pragma=foreign_keys(1)&_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)", path)
 	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

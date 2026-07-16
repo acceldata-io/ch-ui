@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDate, formatBytes } from '../lib/utils/format';
 	import { onMount } from 'svelte';
 	import {
 		RefreshCw,
@@ -7,7 +8,6 @@
 		Columns3,
 		Users,
 		Search,
-		GitBranch,
 		Shield,
 		AlertTriangle,
 		Plus,
@@ -15,7 +15,6 @@
 		Trash2,
 		PanelRightOpen,
 		ChevronRight,
-		ChevronDown,
 		MessageSquare,
 		Siren,
 		Bell,
@@ -30,7 +29,6 @@
 	import ConfirmDialog from '../lib/components/common/ConfirmDialog.svelte';
 	import Sheet from '../lib/components/common/Sheet.svelte';
 	import HelpTip from '../lib/components/common/HelpTip.svelte';
-	import LineageGraphView from '../lib/components/governance/LineageGraph.svelte';
 	import MiniTrendChart from '../lib/components/common/MiniTrendChart.svelte';
 	import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte';
 	import {
@@ -39,10 +37,8 @@
 		fetchTables,
 		fetchTableDetail,
 		fetchQueryLog,
-		fetchTopQueries,
-		fetchLineageGraph,
-		fetchViewGraph,
-		fetchQueryByQueryID,
+		fetchQueryHarvestSettings,
+		updateQueryHarvestMode,
 		fetchAccessUsers,
 		fetchAccessRoles,
 		fetchAccessMatrix,
@@ -80,7 +76,8 @@
 		adminDeleteAlertRule,
 		adminListAlertEvents,
 	} from '../lib/api/alerts';
-	import type { AlertRuleRoutePayload } from '../lib/api/alerts';
+	import type { AlertRuleChannelPayload } from '../lib/api/alerts';
+	import { getSession } from '../lib/stores/session.svelte';
 	import type { AuditLog } from '../lib/types/api';
 	import type {
 		GovernanceOverview,
@@ -88,9 +85,8 @@
 		GovTable,
 		GovColumn,
 		QueryLogEntry,
-		TopQuery,
-		LineageEdge,
-		LineageGraph,
+		QueryHarvestMode,
+		QueryHarvestSettings,
 		ChUser,
 		ChRole,
 		AccessMatrixEntry,
@@ -105,7 +101,7 @@
 	} from '../lib/types/governance';
 
 	// State
-	type GovernanceTab = 'dashboard' | 'tables' | 'queries' | 'lineage' | 'viewgraph' | 'access' | 'incidents' | 'policies' | 'querylog' | 'alerts' | 'auditlog' | 'settings';
+	type GovernanceTab = 'dashboard' | 'tables' | 'queries' | 'access' | 'incidents' | 'policies' | 'alerts' | 'auditlog' | 'settings';
 	type OverPermissionGroup = {
 		userName: string;
 		alerts: OverPermission[];
@@ -120,12 +116,9 @@
 		{ id: 'dashboard', label: 'Dashboard' },
 		{ id: 'tables', label: 'Tables' },
 		{ id: 'queries', label: 'Query Audit' },
-		{ id: 'lineage', label: 'Lineage' },
-		{ id: 'viewgraph', label: 'View Graph' },
 		{ id: 'access', label: 'Access' },
 		{ id: 'incidents', label: 'Incidents' },
 		{ id: 'policies', label: 'Policies' },
-		{ id: 'querylog', label: 'Query Log' },
 		{ id: 'alerts', label: 'Alerts' },
 		{ id: 'auditlog', label: 'Audit Log' },
 		{ id: 'settings', label: 'Settings' },
@@ -159,23 +152,12 @@
 
 	// Query Audit data
 	let queryLog = $state<QueryLogEntry[]>([]);
-	let topQueries = $state<TopQuery[]>([]);
+	let queryHarvest = $state<QueryHarvestSettings | null>(null);
+	let harvestModeSaving = $state<boolean>(false);
 	let queryUserFilter = $state<string>('');
 	let queryLimit = $state<number>(100);
 	let queryDetailSheetOpen = $state<boolean>(false);
 	let selectedQuery = $state<QueryLogEntry | null>(null);
-
-	// Lineage data
-	let lineageEdges = $state<LineageEdge[]>([]);
-	let lineageGraph = $state<LineageGraph | null>(null);
-	let lineageSearch = $state('');
-	let lineageSelectedEdge = $state<LineageEdge | null>(null);
-	let lineageQueryText = $state('');
-	let lineageSheetOpen = $state(false);
-
-	// View Graph data
-	let viewGraphData = $state<LineageGraph | null>(null);
-	let viewGraphSearch = $state('');
 
 	// Access data
 	let users = $state<ChUser[]>([]);
@@ -236,18 +218,6 @@
 		enabled: true
 	});
 
-	// ── ClickHouse Query Log state ───────────────────────────
-	let queryLogLoading = $state(false);
-	let queryLogData = $state<any[]>([]);
-	let queryLogMeta = $state<any[]>([]);
-	let qlTimeRange = $state('1h');
-	let qlSearch = $state('');
-	let qlQueryKind = $state('');
-	let qlStatus = $state('');
-	let qlLimit = $state(100);
-	let qlOffset = $state(0);
-	let expandedRow = $state<number | null>(null);
-
 	// ── Alerts state ─────────────────────────────────────────
 	let alertsLoading = $state(false);
 	let alertChannels = $state<AlertChannel[]>([]);
@@ -260,25 +230,15 @@
 	let deletingRule = $state<AlertRule | null>(null);
 	let channelSheetOpen = $state(false);
 	let ruleSheetOpen = $state(false);
-	type RuleRouteDraft = {
+	type RuleChannelDraft = {
 		channel_id: string;
 		recipients: string;
 		is_active: boolean;
-		delivery_mode: 'immediate' | 'digest';
-		digest_window_minutes: number;
-		escalation_channel_id: string;
-		escalation_recipients: string;
-		escalation_after_failures: number;
 	};
-	let ruleRoutesDraft = $state<RuleRouteDraft[]>([{
+	let ruleChannelsDraft = $state<RuleChannelDraft[]>([{
 		channel_id: '',
 		recipients: '',
 		is_active: true,
-		delivery_mode: 'immediate',
-		digest_window_minutes: 15,
-		escalation_channel_id: '',
-		escalation_recipients: '',
-		escalation_after_failures: 0,
 	}]);
 	let channelForm = $state({
 		name: '',
@@ -366,16 +326,10 @@
 		}))
 	]);
 
-	const qlTimeRangeOptions: ComboboxOption[] = [
-		{ value: '5m', label: '5 min' },
-		{ value: '15m', label: '15 min' },
-		{ value: '30m', label: '30 min' },
-		{ value: '1h', label: '1 hour' },
-		{ value: '6h', label: '6 hours' },
-		{ value: '12h', label: '12 hours' },
-		{ value: '24h', label: '24 hours' },
-		{ value: '3d', label: '3 days' },
-		{ value: '7d', label: '7 days' },
+	const harvestModeOptions: ComboboxOption[] = [
+		{ value: 'auto', label: 'Auto (only with policies)' },
+		{ value: 'always', label: 'Always' },
+		{ value: 'off', label: 'Off' },
 	];
 
 	const alertChannelTypeOptions: ComboboxOption[] = [
@@ -396,11 +350,6 @@
 		{ value: 'warn', label: 'Warning' },
 		{ value: 'error', label: 'Error' },
 		{ value: 'critical', label: 'Critical' },
-	];
-
-	const routeDeliveryModeOptions: ComboboxOption[] = [
-		{ value: 'immediate', label: 'Immediate' },
-		{ value: 'digest', label: 'Digest' },
 	];
 
 	const auditLimitOptions: ComboboxOption[] = [
@@ -437,20 +386,6 @@
 	});
 
 	// Helper functions
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-	}
-
-	function formatTime(ts: string): string {
-		if (!ts) return '-';
-		const date = new Date(ts);
-		return date.toLocaleString();
-	}
-
 	function truncate(s: string, max = 80): string {
 		if (!s) return '';
 		return s.length > max ? s.substring(0, max) + '...' : s;
@@ -527,7 +462,9 @@
 		return 'info';
 	}
 
-	const governanceTabIds: GovernanceTab[] = ['dashboard', 'tables', 'queries', 'lineage', 'viewgraph', 'access', 'incidents', 'policies', 'querylog', 'alerts', 'auditlog', 'settings'];
+	const governanceTabIds: GovernanceTab[] = ['dashboard', 'tables', 'queries', 'access', 'incidents', 'policies', 'alerts', 'auditlog', 'settings'];
+
+	const isAdmin = $derived(getSession()?.role === 'admin');
 
 	function normalizeGovernanceTab(value: string | null | undefined): GovernanceTab {
 		const raw = (value ?? '').trim().toLowerCase();
@@ -577,18 +514,12 @@
 			loadTables();
 		} else if (tab === 'queries') {
 			loadQueries();
-		} else if (tab === 'lineage') {
-			loadLineage();
-		} else if (tab === 'viewgraph') {
-			loadViewGraph();
 		} else if (tab === 'access') {
 			loadAccess();
 		} else if (tab === 'incidents') {
 			loadIncidents();
 		} else if (tab === 'policies') {
 			loadPolicies();
-		} else if (tab === 'querylog') {
-			loadQueryLog();
 		} else if (tab === 'alerts') {
 			loadAlertsAdmin();
 		} else if (tab === 'auditlog') {
@@ -666,41 +597,30 @@
 	async function loadQueries() {
 		loading = true;
 		try {
-			const [logRes, topRes] = await Promise.all([
-				fetchQueryLog({ user: queryUserFilter || undefined, limit: queryLimit }),
-				fetchTopQueries(10)
-			]);
+			const logRes = await fetchQueryLog({ user: queryUserFilter || undefined, limit: queryLimit });
 			queryLog = logRes?.entries ?? [];
-			topQueries = topRes?.queries ?? [];
 		} catch (err: any) {
 			toastError('Failed to load query audit: ' + err.message);
 		} finally {
 			loading = false;
 		}
-	}
-
-	async function loadLineage() {
-		loading = true;
+		// Harvest settings are informational; failures should not block the tab.
 		try {
-			const res = await fetchLineageGraph(true);
-			lineageGraph = res ?? null;
-			lineageEdges = res?.edges ?? [];
-		} catch (err: any) {
-			toastError('Failed to load lineage: ' + err.message);
-		} finally {
-			loading = false;
+			queryHarvest = await fetchQueryHarvestSettings();
+		} catch {
+			queryHarvest = null;
 		}
 	}
 
-	async function loadViewGraph() {
-		loading = true;
+	async function changeHarvestMode(mode: QueryHarvestMode) {
+		harvestModeSaving = true;
 		try {
-			const res = await fetchViewGraph();
-			viewGraphData = res ?? null;
+			queryHarvest = await updateQueryHarvestMode(mode);
+			toastSuccess(`Query harvest mode set to "${mode}"`);
 		} catch (err: any) {
-			toastError('Failed to load view graph: ' + err.message);
+			toastError('Failed to update harvest mode: ' + err.message);
 		} finally {
-			loading = false;
+			harvestModeSaving = false;
 		}
 	}
 
@@ -1046,27 +966,6 @@
 		}
 	}
 
-	// ── ClickHouse Query Log ─────────────────────────────────
-	async function loadQueryLog() {
-		queryLogLoading = true;
-		try {
-			const params = new URLSearchParams();
-			if (qlTimeRange) params.set('timeRange', qlTimeRange);
-			if (qlSearch.trim()) params.set('search', qlSearch.trim());
-			if (qlQueryKind) params.set('queryKind', qlQueryKind);
-			if (qlStatus) params.set('status', qlStatus);
-			params.set('limit', String(qlLimit));
-			params.set('offset', String(qlOffset));
-			const res = await apiGet<{ data: any[]; meta: any[] }>(`/api/governance/clickhouse-query-log?${params}`);
-			queryLogData = res.data ?? [];
-			queryLogMeta = res.meta ?? [];
-		} catch (e: any) {
-			toastError(e.message);
-		} finally {
-			queryLogLoading = false;
-		}
-	}
-
 	// ── Alerts admin ─────────────────────────────────────────
 	async function loadAlertsAdmin() {
 		alertsLoading = true;
@@ -1161,15 +1060,10 @@
 	}
 
 	async function createAlertRuleRecord() {
-		const routes: AlertRuleRoutePayload[] = ruleRoutesDraft.map((r) => ({
-			channel_id: r.channel_id,
-			recipients: r.recipients.split(',').map((s) => s.trim()).filter(Boolean),
-			is_active: r.is_active,
-			delivery_mode: r.delivery_mode,
-			digest_window_minutes: r.delivery_mode === 'digest' ? r.digest_window_minutes : undefined,
-			escalation_channel_id: r.escalation_channel_id || undefined,
-			escalation_recipients: r.escalation_recipients ? r.escalation_recipients.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
-			escalation_after_failures: r.escalation_after_failures || undefined,
+		const channels: AlertRuleChannelPayload[] = ruleChannelsDraft.map((c) => ({
+			channel_id: c.channel_id,
+			recipients: c.recipients.split(',').map((s) => s.trim()).filter(Boolean),
+			is_active: c.is_active,
 		}));
 		try {
 			await adminCreateAlertRule({
@@ -1181,12 +1075,12 @@
 				max_attempts: ruleForm.max_attempts,
 				subject_template: ruleForm.subject_template || undefined,
 				body_template: ruleForm.body_template || undefined,
-				routes,
+				channels,
 			});
 			toastSuccess('Alert rule created');
 			ruleSheetOpen = false;
 			ruleForm = { ...ruleForm, name: '' };
-			ruleRoutesDraft = [{ channel_id: '', recipients: '', is_active: true, delivery_mode: 'immediate', digest_window_minutes: 15, escalation_channel_id: '', escalation_recipients: '', escalation_after_failures: 0 }];
+			ruleChannelsDraft = [{ channel_id: '', recipients: '', is_active: true }];
 			await loadAlertsAdmin();
 		} catch (e: any) {
 			toastError(e.message);
@@ -1224,16 +1118,16 @@
 		return alertChannels.map((ch) => ({ value: ch.id, label: `${ch.name} (${ch.channel_type})` }));
 	}
 
-	function addRuleRouteDraft() {
-		ruleRoutesDraft = [...ruleRoutesDraft, { channel_id: '', recipients: '', is_active: true, delivery_mode: 'immediate', digest_window_minutes: 15, escalation_channel_id: '', escalation_recipients: '', escalation_after_failures: 0 }];
+	function addRuleChannelDraft() {
+		ruleChannelsDraft = [...ruleChannelsDraft, { channel_id: '', recipients: '', is_active: true }];
 	}
 
-	function removeRuleRouteDraft(idx: number) {
-		ruleRoutesDraft = ruleRoutesDraft.filter((_, i) => i !== idx);
+	function removeRuleChannelDraft(idx: number) {
+		ruleChannelsDraft = ruleChannelsDraft.filter((_, i) => i !== idx);
 	}
 
-	function updateRuleRouteDraft(idx: number, patch: Partial<RuleRouteDraft>) {
-		ruleRoutesDraft = ruleRoutesDraft.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+	function updateRuleChannelDraft(idx: number, patch: Partial<RuleChannelDraft>) {
+		ruleChannelsDraft = ruleChannelsDraft.map((c, i) => (i === idx ? { ...c, ...patch } : c));
 	}
 
 	// ── Audit Log ────────────────────────────────────────────
@@ -1409,9 +1303,9 @@
 		</div>
 	</div>
 
-	<div class={`flex-1 overflow-auto p-4 ${activeTab === 'viewgraph' || activeTab === 'lineage' ? 'flex flex-col' : ''}`}>
-		<div class={`${activeTab === 'viewgraph' || activeTab === 'lineage' ? 'flex-1 flex flex-col min-h-0' : 'max-w-7xl mx-auto'}`}>
-			{#if loading && !overview && !tables.length && !queryLog.length && !lineageEdges.length && !users.length && !policies.length}
+	<div class="flex-1 overflow-auto p-4">
+		<div class="max-w-7xl mx-auto">
+			{#if loading && !overview && !tables.length && !queryLog.length && !users.length && !policies.length}
 				<div class="flex justify-center items-center py-12">
 					<Spinner size="lg" />
 				</div>
@@ -1455,13 +1349,6 @@
 										<span class="text-xl font-bold text-gray-900 dark:text-white">{overview.query_count_24h}</span>
 									</div>
 									<p class="text-[11px] text-gray-600 dark:text-gray-400 mt-1">Queries (24h)</p>
-								</div>
-								<div class="ds-panel p-3">
-									<div class="flex items-center justify-between">
-										<GitBranch class="w-4 h-4 text-ch-blue" />
-										<span class="text-xl font-bold text-gray-900 dark:text-white">{overview.lineage_edge_count}</span>
-									</div>
-									<p class="text-[11px] text-gray-600 dark:text-gray-400 mt-1">Lineage Edges</p>
 								</div>
 								<div class="ds-panel p-3">
 									<div class="flex items-center justify-between">
@@ -1527,7 +1414,7 @@
 											<span class="text-sm font-medium text-gray-700 dark:text-gray-300">{syncState.sync_type}</span>
 											<div class="flex items-center space-x-2">
 												<span class="text-xs text-gray-500 dark:text-gray-400">
-													{syncState.last_synced_at ? formatTime(syncState.last_synced_at) : 'Never'}
+													{syncState.last_synced_at ? formatDate(syncState.last_synced_at) : 'Never'}
 												</span>
 													<span
 														class={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -1559,7 +1446,7 @@
 												<div class="text-sm">
 													<div class="flex items-center justify-between mb-1">
 														<span class="font-medium text-gray-900 dark:text-white">{change.database_name}.{change.table_name}</span>
-														<span class="text-xs text-gray-500">{formatTime(change.detected_at)}</span>
+														<span class="text-xs text-gray-500">{formatDate(change.detected_at)}</span>
 													</div>
 													<p class="text-gray-600 dark:text-gray-400">{change.change_type}</p>
 												</div>
@@ -1592,7 +1479,7 @@
 														</span>
 													</div>
 														<p class="text-gray-600 dark:text-gray-400">{truncate(violation.violation_detail, 60)}</p>
-													<p class="text-xs text-gray-500 mt-1">{formatTime(violation.detected_at)}</p>
+													<p class="text-xs text-gray-500 mt-1">{formatDate(violation.detected_at)}</p>
 												</div>
 											{/each}
 										</div>
@@ -1689,6 +1576,25 @@
 					<!-- Query Audit Tab -->
 					{#if activeTab === 'queries'}
 						<div class="space-y-6">
+							{#if queryHarvest && queryHarvest.mode === 'auto' && queryHarvest.policy_count === 0}
+								<div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+									<div class="flex items-center gap-2 min-w-0">
+										<Info class="w-4 h-4 flex-shrink-0" />
+										<span>Query harvesting is paused — no policies defined. Change in harvest settings.</span>
+									</div>
+									{#if isAdmin}
+										<div class="w-full md:w-56 flex-shrink-0">
+											<Combobox
+												options={harvestModeOptions}
+												value={queryHarvest.mode}
+												disabled={harvestModeSaving}
+												onChange={(v) => void changeHarvestMode(v as QueryHarvestMode)}
+											/>
+										</div>
+									{/if}
+								</div>
+							{/if}
+
 							<!-- Filters -->
 							<div class="flex flex-col md:flex-row gap-4">
 								<div class="flex-1">
@@ -1718,31 +1624,6 @@
 								</button>
 							</div>
 
-							<!-- Top Queries -->
-							{#if topQueries.length > 0}
-								<div>
-									<h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Top Queries by Execution Count</h3>
-									<div class="overflow-x-auto">
-										<table class="ds-table">
-											<thead>
-												<tr class="ds-table-head-row">
-													<th class="ds-table-th">Query</th>
-													<th class="ds-table-th-right">Runs</th>
-												</tr>
-											</thead>
-											<tbody>
-												{#each topQueries as tq}
-													<tr class="ds-table-row">
-														<td class="py-2 px-3 text-xs text-gray-500 font-mono max-w-xl truncate">{truncate(tq.sample_query, 140)}</td>
-														<td class="py-2 px-3 text-right text-xs text-gray-500 whitespace-nowrap">{tq.count} runs</td>
-													</tr>
-												{/each}
-											</tbody>
-										</table>
-									</div>
-								</div>
-							{/if}
-
 							<!-- Query Log -->
 							{#if queryLog.length > 0}
 								<div class="overflow-x-auto">
@@ -1761,7 +1642,7 @@
 										<tbody>
 											{#each queryLog as entry}
 												<tr class="ds-table-row">
-													<td class="py-2 px-3 text-xs text-gray-500 whitespace-nowrap">{formatTime(entry.event_time)}</td>
+													<td class="py-2 px-3 text-xs text-gray-500 whitespace-nowrap">{formatDate(entry.event_time)}</td>
 													<td class="py-2 px-3 text-gray-800 dark:text-gray-200">{entry.ch_user}</td>
 													<td class="py-2 px-3">
 														<span
@@ -1795,192 +1676,6 @@
 								<div class="ds-empty py-12">
 									<Search class="w-12 h-12 mx-auto text-gray-400 mb-4" />
 									<p class="text-gray-500 dark:text-gray-400">No query logs found</p>
-								</div>
-							{/if}
-						</div>
-					{/if}
-
-					<!-- Lineage Tab -->
-					{#if activeTab === 'lineage'}
-						<div class="flex flex-col flex-1 min-h-0 gap-4">
-							<!-- Toolbar -->
-							<div class="flex items-center gap-3">
-								<div class="relative flex-1 max-w-sm">
-									<Search size={14} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-									<input
-										type="text"
-										placeholder="Filter by table or database..."
-										class="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-gray-800 dark:text-gray-200 focus:outline-none focus:border-ch-blue"
-										bind:value={lineageSearch}
-									/>
-								</div>
-								<span class="text-xs text-gray-500">{lineageEdges.length} edge{lineageEdges.length !== 1 ? 's' : ''}</span>
-								<button
-									class="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-800 inline-flex items-center gap-1.5"
-									onclick={() => loadLineage()}
-								>
-									<RefreshCw size={12} />
-									Refresh
-								</button>
-							</div>
-
-							<!-- Graph -->
-							{#if lineageGraph && lineageGraph.nodes.length > 0}
-								<div class="flex-1 min-h-0 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
-									<LineageGraphView
-										graph={lineageGraph}
-										searchFilter={lineageSearch}
-										onedgeclick={(edge) => {
-											lineageSelectedEdge = edge;
-											lineageQueryText = '';
-											lineageSheetOpen = true;
-											if (edge.query_id) {
-												fetchQueryByQueryID(edge.query_id)
-													.then((res) => { lineageQueryText = res?.entry?.query_text ?? 'Query text not available'; })
-													.catch(() => { lineageQueryText = 'Failed to load query text'; });
-											}
-										}}
-									/>
-								</div>
-
-								<!-- Legend -->
-								<div class="flex items-center gap-4 text-xs text-gray-500">
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-3 h-0.5 bg-orange-500 rounded"></span> insert_select
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-3 h-0.5 bg-blue-500 rounded" style="border-top: 2px dashed;"></span> create_as_select
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-blue-400"></span> source
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-green-400"></span> target
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-orange-400"></span> current
-									</span>
-								</div>
-							{:else}
-								<div class="ds-empty py-12">
-									<GitBranch class="w-12 h-12 mx-auto text-gray-400 mb-4" />
-									<p class="text-gray-500 dark:text-gray-400">No lineage data. Run a sync to detect data flows.</p>
-								</div>
-							{/if}
-						</div>
-
-						<!-- Edge detail sheet -->
-						{#if lineageSheetOpen && lineageSelectedEdge}
-							<Sheet title="Lineage Edge" open={lineageSheetOpen} onclose={() => lineageSheetOpen = false} size="lg">
-								<div class="space-y-4">
-									<div class="grid grid-cols-2 gap-3 text-sm">
-										<div>
-											<div class="text-xs text-gray-500 mb-1">Source</div>
-											<div class="font-medium text-gray-800 dark:text-gray-200">{lineageSelectedEdge.source_database}.{lineageSelectedEdge.source_table}</div>
-										</div>
-										<div>
-											<div class="text-xs text-gray-500 mb-1">Target</div>
-											<div class="font-medium text-gray-800 dark:text-gray-200">{lineageSelectedEdge.target_database}.{lineageSelectedEdge.target_table}</div>
-										</div>
-										<div>
-											<div class="text-xs text-gray-500 mb-1">Type</div>
-											<span class="inline-flex items-center px-1.5 py-0.5 rounded border border-orange-200 bg-orange-100 text-orange-900 dark:border-orange-700/60 dark:bg-orange-500/15 dark:text-orange-200 text-[11px]">
-												{lineageSelectedEdge.edge_type}
-											</span>
-										</div>
-										<div>
-											<div class="text-xs text-gray-500 mb-1">User</div>
-											<div class="text-gray-700 dark:text-gray-300">{lineageSelectedEdge.ch_user}</div>
-										</div>
-									</div>
-
-									{#if lineageSelectedEdge.column_edges && lineageSelectedEdge.column_edges.length > 0}
-										<div>
-											<div class="text-xs text-gray-500 mb-2">Column Mappings</div>
-											<div class="grid grid-cols-[1fr_auto_1fr] gap-x-3 gap-y-1 text-xs">
-												{#each lineageSelectedEdge.column_edges as ce}
-													<span class="font-mono text-gray-700 dark:text-gray-300">{ce.source_column}</span>
-													<span class="text-gray-400">&rarr;</span>
-													<span class="font-mono text-gray-700 dark:text-gray-300">{ce.target_column}</span>
-												{/each}
-											</div>
-										</div>
-									{/if}
-
-									<div>
-										<div class="text-xs text-gray-500 mb-2">Query</div>
-										{#if lineageQueryText}
-											<pre class="text-xs bg-gray-100 dark:bg-gray-800 rounded-lg p-3 overflow-auto max-h-80 text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{lineageQueryText}</pre>
-										{:else}
-											<div class="text-xs text-gray-500">Loading query...</div>
-										{/if}
-									</div>
-								</div>
-							</Sheet>
-						{/if}
-					{/if}
-
-					<!-- View Graph Tab -->
-					{#if activeTab === 'viewgraph'}
-						<div class="flex flex-col flex-1 min-h-0 gap-4">
-							<!-- Toolbar -->
-							<div class="flex items-center gap-3">
-								<div class="relative flex-1 max-w-sm">
-									<Search size={14} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-									<input
-										type="text"
-										placeholder="Filter by table or view name..."
-										class="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-gray-800 dark:text-gray-200 focus:outline-none focus:border-ch-blue"
-										bind:value={viewGraphSearch}
-									/>
-								</div>
-								<span class="text-xs text-gray-500">
-									{viewGraphData?.nodes?.length ?? 0} node{(viewGraphData?.nodes?.length ?? 0) !== 1 ? 's' : ''},
-									{viewGraphData?.edges?.length ?? 0} edge{(viewGraphData?.edges?.length ?? 0) !== 1 ? 's' : ''}
-								</span>
-								<button
-									class="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-800 inline-flex items-center gap-1.5"
-									onclick={() => loadViewGraph()}
-								>
-									<RefreshCw size={12} />
-									Refresh
-								</button>
-							</div>
-
-							<!-- Graph -->
-							{#if viewGraphData && viewGraphData.nodes.length > 0}
-								<div class="flex-1 min-h-0 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
-									<LineageGraphView
-										graph={viewGraphData}
-										searchFilter={viewGraphSearch}
-									/>
-								</div>
-
-								<!-- Legend -->
-								<div class="flex items-center gap-4 text-xs text-gray-500">
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-3 h-0.5 bg-orange-500 rounded"></span> view_dependency (source &rarr; view)
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-3 h-0.5 bg-blue-500 rounded" style="border-top: 2px dashed;"></span> materialized_to (MV &rarr; target)
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-blue-400"></span> source table
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-orange-400"></span> materialized view
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-green-400"></span> target table
-									</span>
-									<span class="inline-flex items-center gap-1.5">
-										<span class="w-2 h-2 rounded-full border-2 border-purple-400"></span> view
-									</span>
-								</div>
-							{:else}
-								<div class="ds-empty py-12">
-									<GitBranch class="w-12 h-12 mx-auto text-gray-400 mb-4" />
-									<p class="text-gray-500 dark:text-gray-400">No views or materialized views found. Create some views in your ClickHouse instance to see the dependency graph.</p>
 								</div>
 							{/if}
 						</div>
@@ -2260,7 +1955,7 @@
 														<td class="px-3 py-2.5 text-gray-700 dark:text-gray-300">{incident.status}</td>
 														<td class="px-3 py-2.5 text-gray-700 dark:text-gray-300">{incident.occurrence_count}</td>
 														<td class="px-3 py-2.5 text-gray-700 dark:text-gray-300">{incident.assignee || '-'}</td>
-														<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatTime(incident.last_seen_at)}</td>
+														<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatDate(incident.last_seen_at)}</td>
 														<td class="px-3 py-2.5 text-right">
 															<button class="ds-btn-outline px-2.5 py-1" onclick={() => openIncidentDetails(incident)}>
 																<PanelRightOpen class="w-3.5 h-3.5" />
@@ -2364,7 +2059,7 @@
 																	{policy.enabled ? 'enabled' : 'disabled'}
 																</span>
 															</td>
-															<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatTime(policy.updated_at)}</td>
+															<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatDate(policy.updated_at)}</td>
 															<td class="px-3 py-2.5">
 																<div class="flex justify-end gap-1">
 																		<button
@@ -2434,7 +2129,7 @@
 														</td>
 														<td class="px-3 py-2.5 text-gray-600 dark:text-gray-300">{violation.ch_user}</td>
 														<td class="px-3 py-2.5 text-gray-600 dark:text-gray-300">{truncate(violation.violation_detail, 120)}</td>
-														<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatTime(violation.detected_at)}</td>
+														<td class="px-3 py-2.5 text-gray-500 dark:text-gray-400">{formatDate(violation.detected_at)}</td>
 														<td class="px-3 py-2.5 text-right">
 															<button class="ds-btn-outline px-2 py-1" onclick={() => createIncidentFromViolation(violation)}>
 																<MessageSquare class="w-3.5 h-3.5" />
@@ -2457,135 +2152,6 @@
 						{/if}
 					{/if}
 
-					<!-- Query Log Tab -->
-					{#if activeTab === 'querylog'}
-						<div class="flex flex-wrap items-center gap-2 mb-3">
-							<div class="w-36">
-								<Combobox
-									options={qlTimeRangeOptions}
-									value={qlTimeRange}
-									onChange={(v) => qlTimeRange = v}
-								/>
-							</div>
-							<input
-								type="text"
-								placeholder="Search query or user..."
-								class="ds-input-sm w-48"
-								bind:value={qlSearch}
-							/>
-							<div class="w-36">
-								<Combobox
-									value={qlQueryKind}
-									placeholder="All kinds"
-									options={[
-										{ value: '', label: 'All kinds', keywords: 'all' },
-										{ value: 'Select', label: 'Select' },
-										{ value: 'Insert', label: 'Insert' },
-										{ value: 'Create', label: 'Create' },
-										{ value: 'Alter', label: 'Alter' },
-										{ value: 'Drop', label: 'Drop' },
-									]}
-									onChange={(v) => qlQueryKind = v}
-								/>
-							</div>
-							<div class="w-32">
-								<Combobox
-									value={qlStatus}
-									placeholder="All status"
-									options={[
-										{ value: '', label: 'All status', keywords: 'all' },
-										{ value: 'success', label: 'Success' },
-										{ value: 'error', label: 'Error' },
-									]}
-									onChange={(v) => qlStatus = v}
-								/>
-							</div>
-							<button
-								class="ds-btn-primary"
-								onclick={() => { qlOffset = 0; loadQueryLog() }}
-							>Search</button>
-							<button
-								class="ds-btn-ghost"
-								onclick={() => loadQueryLog()}
-								title="Refresh"
-							>
-								<RefreshCw size={14} />
-							</button>
-						</div>
-
-						{#if queryLogLoading}
-							<div class="flex items-center justify-center py-12"><Spinner /></div>
-						{:else if queryLogData.length === 0}
-							<p class="text-center text-sm text-gray-500 py-8">No query log entries found</p>
-						{:else}
-							<div class="ds-table-wrap">
-								<table class="ds-table">
-									<thead>
-										<tr class="ds-table-head-row">
-											<th class="w-6"></th>
-											<th class="ds-table-th">Time</th>
-											<th class="ds-table-th">User</th>
-											<th class="ds-table-th">Query</th>
-											<th class="ds-table-th-right">Duration</th>
-											<th class="ds-table-th-right">Rows</th>
-											<th class="ds-table-th">Status</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each queryLogData as row, i}
-											<tr
-												class="ds-table-row cursor-pointer"
-												onclick={() => expandedRow = expandedRow === i ? null : i}
-											>
-												<td class="py-2 px-1 text-gray-400">
-													{#if expandedRow === i}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
-												</td>
-												<td class="ds-td-mono whitespace-nowrap">{formatTime(row.event_time)}</td>
-												<td class="ds-td-mono">{row.user}</td>
-												<td class="ds-td-mono max-w-xs truncate">{truncate(row.query ?? '', 60)}</td>
-												<td class="ds-td-right whitespace-nowrap">{row.query_duration_ms}ms</td>
-												<td class="ds-td-right">{row.read_rows ?? 0}</td>
-												<td class="ds-td">
-													{#if row.exception_code === 0}
-														<span class="ds-badge ds-badge-success">OK</span>
-													{:else}
-														<span class="ds-badge ds-badge-danger">Error</span>
-													{/if}
-												</td>
-											</tr>
-											{#if expandedRow === i}
-												<tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-900">
-													<td colspan="7" class="p-3">
-														<pre class="text-xs text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap break-all rounded p-3 border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900">{row.query}</pre>
-														{#if row.exception}
-															<p class="text-xs text-red-500 mt-2"><strong>Error:</strong> {row.exception}</p>
-														{/if}
-													</td>
-												</tr>
-											{/if}
-										{/each}
-									</tbody>
-								</table>
-							</div>
-
-							<div class="flex items-center justify-between mt-3">
-								<span class="text-xs text-gray-500">Showing {qlOffset + 1}–{qlOffset + queryLogData.length}</span>
-								<div class="flex gap-2">
-									<button
-										class="ds-btn-outline disabled:opacity-50"
-										disabled={qlOffset === 0}
-										onclick={() => { qlOffset = Math.max(0, qlOffset - qlLimit); loadQueryLog() }}
-									>Prev</button>
-									<button
-										class="ds-btn-outline disabled:opacity-50"
-										disabled={queryLogData.length < qlLimit}
-										onclick={() => { qlOffset += qlLimit; loadQueryLog() }}
-									>Next</button>
-								</div>
-							</div>
-						{/if}
-					{/if}
-
 					<!-- Alerts Tab -->
 					{#if activeTab === 'alerts'}
 						{#if alertsLoading}
@@ -2595,7 +2161,7 @@
 								<div class="flex items-center gap-2">
 									<Bell size={16} class="text-ch-blue" />
 									<h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Alerting Control Center</h2>
-									<HelpTip text="Define delivery channels and route policies. Complex create flows live in sheets to keep this page clean and easy to scan." />
+									<HelpTip text="Define delivery channels and rules that send to them. Complex create flows live in sheets to keep this page clean and easy to scan." />
 								</div>
 								<div class="flex flex-wrap items-center gap-2">
 									<button class="ds-btn-outline" onclick={() => channelSheetOpen = true}>New Channel</button>
@@ -2621,7 +2187,7 @@
 							<div class="ds-card p-3 mb-4">
 								<div class="flex items-center gap-2 mb-2">
 									<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Channels</h3>
-									<HelpTip text="Channels are provider credentials (SMTP, Resend, Brevo). Routes reference these channels for delivery." />
+									<HelpTip text="Channels are provider credentials (SMTP, Resend, Brevo). Rules reference these channels for delivery." />
 								</div>
 								{#if alertChannels.length === 0}
 									<p class="text-sm text-gray-500 py-4">No alert channels configured.</p>
@@ -2668,7 +2234,7 @@
 							<div class="ds-card p-3 mb-4">
 								<div class="flex items-center gap-2 mb-2">
 									<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Rules</h3>
-									<HelpTip text="Each rule watches event types/severity and contains one or more routes. Expand a rule to inspect recipients, digest windows, and escalation." />
+									<HelpTip text="Each rule watches event types/severity and delivers to one or more channels. Expand a rule to inspect its channels and recipients." />
 								</div>
 								{#if alertRules.length === 0}
 									<p class="text-sm text-gray-500 py-4">No alert rules configured.</p>
@@ -2679,7 +2245,7 @@
 												<summary class="cursor-pointer list-none px-3 py-2.5 flex items-center justify-between bg-gray-50 dark:bg-gray-900">
 													<div class="min-w-0">
 														<p class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{rule.name}</p>
-														<p class="text-[11px] text-gray-500">{rule.event_type} · min {rule.severity_min} · {rule.routes.length} routes</p>
+														<p class="text-[11px] text-gray-500">{rule.event_type} · min {rule.severity_min} · {rule.channels.length} {rule.channels.length === 1 ? 'channel' : 'channels'}</p>
 													</div>
 													<div class="flex items-center gap-2">
 														<label class="ds-checkbox-label text-xs">
@@ -2702,33 +2268,20 @@
 														<div class="ds-panel-muted p-2"><span class="text-gray-500">Body Template</span><div class="font-medium text-gray-800 dark:text-gray-200 truncate">{rule.body_template || 'Default'}</div></div>
 													</div>
 													<div class="overflow-x-auto rounded border border-gray-200 dark:border-gray-800">
-														<table class="ds-table text-xs min-w-[980px]">
+														<table class="ds-table text-xs min-w-[560px]">
 															<thead>
 																<tr class="ds-table-head-row bg-gray-50 dark:bg-gray-900">
 																	<th class="ds-table-th">Channel</th>
 																	<th class="ds-table-th">Recipients</th>
-																	<th class="ds-table-th">Delivery</th>
-																	<th class="ds-table-th">Escalation</th>
 																	<th class="ds-table-th">Active</th>
 																</tr>
 															</thead>
 															<tbody>
-																{#each rule.routes as route}
+																{#each rule.channels as binding}
 																	<tr class="ds-table-row">
-																		<td class="ds-td-mono">{route.channel_name} ({route.channel_type})</td>
-																		<td class="ds-td-mono truncate max-w-xs">{route.recipients.join(', ')}</td>
-																		<td class="ds-td-mono">{route.delivery_mode}{route.delivery_mode === 'digest' ? ` (${route.digest_window_minutes}m)` : ''}</td>
-																		<td class="ds-td-mono">
-																			{#if route.escalation_channel_name}
-																				{route.escalation_channel_name}
-																				{#if route.escalation_after_failures > 0}
-																					<span class="text-gray-500"> after {route.escalation_after_failures} fail</span>
-																				{/if}
-																			{:else}
-																				—
-																			{/if}
-																		</td>
-																		<td class="ds-td">{route.is_active ? 'yes' : 'no'}</td>
+																		<td class="ds-td-mono">{binding.channel_name} ({binding.channel_type})</td>
+																		<td class="ds-td-mono truncate max-w-xs">{binding.recipients.join(', ')}</td>
+																		<td class="ds-td">{binding.is_active ? 'yes' : 'no'}</td>
 																	</tr>
 																{/each}
 															</tbody>
@@ -2766,7 +2319,7 @@
 											<tbody>
 												{#each alertEvents as evt}
 													<tr class="ds-table-row">
-														<td class="ds-td-mono">{formatTime(evt.created_at)}</td>
+														<td class="ds-td-mono">{formatDate(evt.created_at)}</td>
 														<td class="ds-td-mono">{evt.event_type}</td>
 														<td class="ds-td-mono">{evt.severity}</td>
 														<td class="ds-td">{evt.title}</td>
@@ -2853,7 +2406,7 @@
 									<tbody>
 										{#each auditLogs as log}
 											<tr class="ds-table-row">
-												<td class="ds-td-mono whitespace-nowrap">{formatTime(log.created_at)}</td>
+												<td class="ds-td-mono whitespace-nowrap">{formatDate(log.created_at)}</td>
 												<td class="ds-td">
 													<span class="ds-badge ds-badge-neutral font-mono">{log.action}</span>
 												</td>
@@ -2900,7 +2453,7 @@
 											</div>
 											{#if govSettings.updated_at}
 												<p class="text-xs text-gray-500">
-													Last changed {formatTime(govSettings.updated_at)}
+													Last changed {formatDate(govSettings.updated_at)}
 													{#if govSettings.updated_by}by <span class="font-mono">{govSettings.updated_by}</span>{/if}
 												</p>
 											{:else}
@@ -3084,7 +2637,7 @@
 											<div class="min-w-0">
 												<p class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{note.comment_text}</p>
 												<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-													{note.created_by || 'unknown'} · {formatTime(note.created_at)}
+													{note.created_by || 'unknown'} · {formatDate(note.created_at)}
 												</p>
 											</div>
 											<button class="ds-icon-btn hover:text-red-500" title="Delete note" onclick={() => deleteTableNote(note.id)}>
@@ -3126,7 +2679,7 @@
 					</div>
 					<div class="ds-panel-muted p-3">
 						<p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Timestamp</p>
-						<p class="text-sm font-medium text-gray-900 dark:text-white mt-1">{formatTime(selectedQuery.event_time)}</p>
+						<p class="text-sm font-medium text-gray-900 dark:text-white mt-1">{formatDate(selectedQuery.event_time)}</p>
 					</div>
 				</div>
 
@@ -3226,7 +2779,7 @@
 					<p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Last Query Activity</p>
 					<p class="text-sm text-gray-700 dark:text-gray-300">
 						{selectedOverPermission.last_query_time
-							? `${formatTime(selectedOverPermission.last_query_time)} (${selectedOverPermission.days_since_query ?? 0} days ago)`
+							? `${formatDate(selectedOverPermission.last_query_time)} (${selectedOverPermission.days_since_query ?? 0} days ago)`
 							: 'No query usage found'}
 					</p>
 				</div>
@@ -3362,7 +2915,7 @@
 								{#each incidentComments as comment}
 									<div class="rounded-lg border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-950">
 										<p class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{comment.comment_text}</p>
-										<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{comment.created_by || 'unknown'} · {formatTime(comment.created_at)}</p>
+										<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{comment.created_by || 'unknown'} · {formatDate(comment.created_at)}</p>
 									</div>
 								{/each}
 							</div>
@@ -3641,8 +3194,8 @@
 		}}
 	>
 		<div class="flex items-center gap-2">
-			<p class="text-xs text-gray-500">Rules map governance/system events to delivery routes and escalation behavior.</p>
-			<HelpTip text="Each route must include a channel and recipients. You can mix immediate and digest routes under the same rule." />
+			<p class="text-xs text-gray-500">Rules map governance/system events to delivery channels.</p>
+			<HelpTip text="Each channel binding must include a channel and recipients. A rule can deliver to several channels at once." />
 		</div>
 
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -3691,20 +3244,20 @@
 
 		<div class="space-y-2 border-t border-gray-200 dark:border-gray-800 pt-3">
 			<div class="flex items-center justify-between">
-				<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Routes</h3>
-				<button type="button" class="ds-btn-outline" onclick={() => addRuleRouteDraft()}>Add Route</button>
+				<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Channels</h3>
+				<button type="button" class="ds-btn-outline" onclick={() => addRuleChannelDraft()}>Add Channel</button>
 			</div>
 
 			{#if alertChannels.length === 0}
-				<p class="text-xs text-amber-600 dark:text-amber-400">Create at least one alert channel before adding routes.</p>
+				<p class="text-xs text-amber-600 dark:text-amber-400">Create at least one alert channel before adding channel bindings.</p>
 			{/if}
 
-			{#each ruleRoutesDraft as route, idx}
+			{#each ruleChannelsDraft as binding, idx}
 				<div class="ds-panel-muted p-3 space-y-3">
 					<div class="flex items-center justify-between">
-						<p class="text-xs font-semibold text-gray-700 dark:text-gray-300">Route {idx + 1}</p>
-						{#if ruleRoutesDraft.length > 1}
-							<button type="button" class="text-xs text-red-500 hover:text-red-700" onclick={() => removeRuleRouteDraft(idx)}>Remove</button>
+						<p class="text-xs font-semibold text-gray-700 dark:text-gray-300">Channel {idx + 1}</p>
+						{#if ruleChannelsDraft.length > 1}
+							<button type="button" class="text-xs text-red-500 hover:text-red-700" onclick={() => removeRuleChannelDraft(idx)}>Remove</button>
 						{/if}
 					</div>
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -3712,8 +3265,8 @@
 							<span class="text-xs text-gray-500">Channel</span>
 							<Combobox
 								options={alertChannelOptions()}
-								value={route.channel_id}
-								onChange={(v) => updateRuleRouteDraft(idx, { channel_id: v })}
+								value={binding.channel_id}
+								onChange={(v) => updateRuleChannelDraft(idx, { channel_id: v })}
 							/>
 						</label>
 						<label class="space-y-1">
@@ -3721,54 +3274,8 @@
 							<input
 								class="ds-input-sm"
 								placeholder="ops@company.com, data@company.com"
-								value={route.recipients}
-								oninput={(e) => updateRuleRouteDraft(idx, { recipients: (e.target as HTMLInputElement).value })}
-							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs text-gray-500">Delivery Mode</span>
-							<Combobox
-								options={routeDeliveryModeOptions}
-								value={route.delivery_mode}
-								onChange={(v) => updateRuleRouteDraft(idx, { delivery_mode: v as 'immediate' | 'digest' })}
-							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs text-gray-500">Digest Window (minutes)</span>
-							<input
-								class="ds-input-sm"
-								type="number"
-								min="1"
-								disabled={route.delivery_mode !== 'digest'}
-								value={route.digest_window_minutes}
-								oninput={(e) => updateRuleRouteDraft(idx, { digest_window_minutes: Number((e.target as HTMLInputElement).value) || 15 })}
-							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs text-gray-500">Escalation Channel</span>
-							<Combobox
-								options={alertChannelOptions()}
-								value={route.escalation_channel_id}
-								onChange={(v) => updateRuleRouteDraft(idx, { escalation_channel_id: v })}
-							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs text-gray-500">Escalation Recipients</span>
-							<input
-								class="ds-input-sm"
-								placeholder="manager@company.com"
-								value={route.escalation_recipients}
-								oninput={(e) => updateRuleRouteDraft(idx, { escalation_recipients: (e.target as HTMLInputElement).value })}
-							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs text-gray-500">Escalate After Failures</span>
-							<input
-								class="ds-input-sm"
-								type="number"
-								min="0"
-								value={route.escalation_after_failures}
-								oninput={(e) => updateRuleRouteDraft(idx, { escalation_after_failures: Number((e.target as HTMLInputElement).value) || 0 })}
+								value={binding.recipients}
+								oninput={(e) => updateRuleChannelDraft(idx, { recipients: (e.target as HTMLInputElement).value })}
 							/>
 						</label>
 					</div>
@@ -3776,10 +3283,10 @@
 						<input
 							type="checkbox"
 							class="ds-checkbox"
-							checked={route.is_active}
-							onchange={(e) => updateRuleRouteDraft(idx, { is_active: (e.target as HTMLInputElement).checked })}
+							checked={binding.is_active}
+							onchange={(e) => updateRuleChannelDraft(idx, { is_active: (e.target as HTMLInputElement).checked })}
 						/>
-						Route active
+						Channel active
 					</label>
 				</div>
 			{/each}

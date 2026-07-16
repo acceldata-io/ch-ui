@@ -15,8 +15,6 @@ import (
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
-
-	"github.com/caioricciuti/ch-ui/internal/config"
 )
 
 // Provider holds an initialized OIDC verifier and OAuth2 config.
@@ -24,6 +22,7 @@ type Provider struct {
 	verifier    *gooidc.IDTokenVerifier
 	oauth2      oauth2.Config
 	groupsClaim string
+	settings    Settings
 }
 
 // Claims is the subset of ID-token claims CH-UI uses.
@@ -35,45 +34,53 @@ type Claims struct {
 	Groups        []string
 }
 
-// New initializes an OIDC provider from config by discovering the issuer.
-func New(ctx context.Context, cfg *config.Config) (*Provider, error) {
-	provider, err := gooidc.NewProvider(ctx, strings.TrimSpace(cfg.OIDCIssuerURL))
+// New initializes an OIDC provider from settings by discovering the issuer.
+func New(ctx context.Context, s Settings) (*Provider, error) {
+	provider, err := gooidc.NewProvider(ctx, strings.TrimSpace(s.IssuerURL))
 	if err != nil {
-		return nil, fmt.Errorf("oidc discovery for %q: %w", cfg.OIDCIssuerURL, err)
+		return nil, fmt.Errorf("oidc discovery for %q: %w", s.IssuerURL, err)
 	}
 
-	groupsClaim := strings.TrimSpace(cfg.OIDCGroupsClaim)
+	groupsClaim := strings.TrimSpace(s.GroupsClaim)
 	if groupsClaim == "" {
 		groupsClaim = "groups"
 	}
 
 	scopes := []string{gooidc.ScopeOpenID, "email", "profile"}
-	if len(cfg.OIDCAdminGroups) > 0 || len(cfg.OIDCAnalystGroups) > 0 {
+	if len(s.AdminGroups) > 0 || len(s.AnalystGroups) > 0 || len(s.ViewerGroups) > 0 {
 		scopes = append(scopes, groupsClaim)
 	}
 
 	return &Provider{
-		verifier: provider.Verifier(&gooidc.Config{ClientID: cfg.OIDCClientID}),
+		verifier: provider.Verifier(&gooidc.Config{ClientID: s.ClientID}),
 		oauth2: oauth2.Config{
-			ClientID:     cfg.OIDCClientID,
-			ClientSecret: cfg.OIDCClientSecret,
-			RedirectURL:  cfg.OIDCRedirectURL,
+			ClientID:     s.ClientID,
+			ClientSecret: s.ClientSecret,
+			RedirectURL:  s.RedirectURL,
 			Endpoint:     provider.Endpoint(),
 			Scopes:       scopes,
 		},
 		groupsClaim: groupsClaim,
+		settings:    s,
 	}, nil
 }
 
-// AuthCodeURL builds the IdP authorization URL with state and nonce.
-func (p *Provider) AuthCodeURL(state, nonce string) string {
-	return p.oauth2.AuthCodeURL(state, gooidc.Nonce(nonce))
+// Settings returns the settings this provider was initialized with.
+func (p *Provider) Settings() Settings {
+	return p.settings
 }
 
-// Exchange swaps the authorization code for tokens and verifies the ID token,
-// checking that its nonce matches the one issued at login.
-func (p *Provider) Exchange(ctx context.Context, code, expectedNonce string) (*Claims, error) {
-	tok, err := p.oauth2.Exchange(ctx, code)
+// AuthCodeURL builds the IdP authorization URL with state, nonce and a PKCE
+// S256 code challenge derived from verifier.
+func (p *Provider) AuthCodeURL(state, nonce, verifier string) string {
+	return p.oauth2.AuthCodeURL(state, gooidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
+}
+
+// Exchange swaps the authorization code for tokens (sending the PKCE code
+// verifier) and verifies the ID token, checking that its nonce matches the
+// one issued at login.
+func (p *Provider) Exchange(ctx context.Context, code, expectedNonce, verifier string) (*Claims, error) {
+	tok, err := p.oauth2.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}

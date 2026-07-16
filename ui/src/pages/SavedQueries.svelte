@@ -4,6 +4,7 @@
   import { apiGet, apiDel, apiPost, apiPut } from '../lib/api/client'
   import { openQueryTab, openSavedQueryTab, renameSavedQueryTabs } from '../lib/stores/tabs.svelte'
   import { detectQueryParams } from '../lib/utils/query-params'
+  import { formatDate, formatRelativeTime } from '../lib/utils/format'
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
   import Button from '../lib/components/common/Button.svelte'
   import Spinner from '../lib/components/common/Spinner.svelte'
@@ -241,28 +242,6 @@
   function parseTime(value: string): number {
     const t = Date.parse(value)
     return Number.isFinite(t) ? t : 0
-  }
-
-  function formatDate(value: string): string {
-    const t = parseTime(value)
-    if (!t) return value
-    return new Date(t).toLocaleString()
-  }
-
-  function formatRelative(value: string): string {
-    const t = parseTime(value)
-    if (!t) return 'unknown'
-    const delta = Math.max(0, Date.now() - t)
-    const minutes = Math.floor(delta / 60000)
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes}m ago`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours}h ago`
-    const days = Math.floor(hours / 24)
-    if (days < 30) return `${days}d ago`
-    const months = Math.floor(days / 30)
-    if (months < 12) return `${months}mo ago`
-    return `${Math.floor(months / 12)}y ago`
   }
 
   function countLines(sql: string): number {
@@ -515,7 +494,7 @@
 
                 <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
                   <div class="flex items-center gap-3 text-[11px] text-gray-500">
-                    <span class="inline-flex items-center gap-1"><CalendarClock size={12} /> {formatRelative(query.updated_at)}</span>
+                    <span class="inline-flex items-center gap-1"><CalendarClock size={12} /> {formatRelativeTime(query.updated_at)}</span>
                     <span class="inline-flex items-center gap-1"><Hash size={12} /> {query.query.length.toLocaleString()} chars</span>
                   </div>
 

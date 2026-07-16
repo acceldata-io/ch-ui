@@ -3,7 +3,7 @@
   import type { TableTab } from '../../../stores/tabs.svelte'
   import type { ColumnMeta } from '../../../types/query'
   import { fetchTableInfo, fetchTableSchema } from '../../../api/query'
-  import { formatBytes, formatNumber } from '../../../utils/format'
+  import { formatBytes, formatDate, formatNumber } from '../../../utils/format'
   import { copyToClipboard } from '../../../utils/export'
   import { success } from '../../../stores/toast.svelte'
   import { getTheme } from '../../../stores/theme.svelte'
@@ -277,24 +277,6 @@
     if (t === 'schema') loadSchema()
   }
 
-  function formatDateTime(value: unknown): string {
-    if (!value) return '—'
-    const date = new Date(String(value))
-    if (Number.isNaN(date.getTime())) return String(value)
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      }).format(date)
-    } catch {
-      return date.toLocaleString()
-    }
-  }
-
   const subTabs: { id: SubTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'schema', label: 'Schema' },
@@ -308,7 +290,7 @@
       { label: 'Rows', value: formatNumber(Number(tableInfo.total_rows ?? 0)), icon: Rows3, color: 'text-ch-orange' },
       { label: 'Size', value: formatBytes(Number(tableInfo.total_bytes ?? 0)), icon: HardDrive, color: 'text-ch-green' },
       { label: 'Engine', value: tableInfo.engine ?? '—', icon: Database, color: 'text-ch-orange' },
-      { label: 'Last Modified', value: formatDateTime(tableInfo.metadata_modification_time), icon: Clock, color: 'text-gray-500' },
+      { label: 'Last Modified', value: formatDate(tableInfo.metadata_modification_time), icon: Clock, color: 'text-gray-500' },
     ]
   })
 

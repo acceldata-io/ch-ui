@@ -62,7 +62,7 @@ func (h *TelemetryHandler) execQuery(r *http.Request, sql string, timeout time.D
 func (h *TelemetryHandler) DetectSchema(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *TelemetryHandler) DetectSchema(w http.ResponseWriter, r *http.Request) 
 	result, err := h.execQuery(r, sql, 15*time.Second)
 	if err != nil {
 		slog.Warn("Telemetry schema detection failed", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -85,7 +85,7 @@ func (h *TelemetryHandler) DetectSchema(w http.ResponseWriter, r *http.Request) 
 func (h *TelemetryHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *TelemetryHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 		Offset   int      `json:"offset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
@@ -160,7 +160,7 @@ func (h *TelemetryHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 	result, err := h.execQuery(r, sql, 30*time.Second)
 	if err != nil {
 		slog.Warn("Telemetry log query failed", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *TelemetryHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 func (h *TelemetryHandler) ListLogServices(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -192,7 +192,7 @@ func (h *TelemetryHandler) ListLogServices(w http.ResponseWriter, r *http.Reques
 	result, err := h.execQuery(r, sql, 15*time.Second)
 	if err != nil {
 		slog.Warn("Telemetry services query failed", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -206,7 +206,7 @@ func (h *TelemetryHandler) ListLogServices(w http.ResponseWriter, r *http.Reques
 func (h *TelemetryHandler) LogHistogram(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -220,7 +220,7 @@ func (h *TelemetryHandler) LogHistogram(w http.ResponseWriter, r *http.Request) 
 		Search   string   `json:"search"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *TelemetryHandler) LogHistogram(w http.ResponseWriter, r *http.Request) 
 	result, err := h.execQuery(r, sql, 30*time.Second)
 	if err != nil {
 		slog.Warn("Telemetry histogram query failed", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -304,13 +304,13 @@ func (h *TelemetryHandler) LogHistogram(w http.ResponseWriter, r *http.Request) 
 func (h *TelemetryHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	cfg, err := h.DB.GetTelemetryConfig(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get config"})
+		writeError(w, http.StatusInternalServerError, "Failed to get config")
 		return
 	}
 
@@ -321,19 +321,19 @@ func (h *TelemetryHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 func (h *TelemetryHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	var body json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	if err := h.DB.SaveTelemetryConfig(session.ConnectionID, string(body)); err != nil {
 		slog.Error("Failed to save telemetry config", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save config"})
+		writeError(w, http.StatusInternalServerError, "Failed to save config")
 		return
 	}
 

@@ -4,7 +4,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -69,6 +71,7 @@ type serverConfigFile struct {
 	ClickHouseURL      string   `yaml:"clickhouse_url"`
 	ConnectionName     string   `yaml:"connection_name"`
 	AppSecretKey       string   `yaml:"app_secret_key"`
+	SessionMaxAge      int      `yaml:"session_max_age"`
 	AllowedOrigins     []string `yaml:"allowed_origins"`
 	TunnelURL          string   `yaml:"tunnel_url"`
 	TLSCertFile        string   `yaml:"tls_cert_file"`
@@ -154,6 +157,11 @@ func Load(configPath string) *Config {
 	if v := os.Getenv("APP_SECRET_KEY"); v != "" {
 		cfg.AppSecretKey = trimQuotes(v)
 	}
+	if v := os.Getenv("SESSION_MAX_AGE"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			cfg.SessionMaxAge = secs
+		}
+	}
 	if v := os.Getenv("ALLOWED_ORIGINS"); v != "" {
 		cfg.AllowedOrigins = nil
 		for _, o := range strings.Split(v, ",") {
@@ -216,9 +224,42 @@ func Load(configPath string) *Config {
 		cfg.TunnelURL = "ws://127.0.0.1:" + strconv.Itoa(cfg.Port) + "/connect"
 	}
 
-	cfg.DevMode = os.Getenv("NODE_ENV") != "production"
+	// Production-safe default. The server command overrides this with its
+	// --dev flag; NODE_ENV=development is honored for any other entry point.
+	cfg.DevMode = os.Getenv("NODE_ENV") == "development"
 
 	return cfg
+}
+
+// warnUnknownConfigKeys logs any top-level YAML keys that CH-UI does not
+// recognize, so typos surface at startup instead of being silently ignored.
+func warnUnknownConfigKeys(data []byte, path string) {
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+
+	known := make(map[string]bool)
+	t := reflect.TypeOf(serverConfigFile{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		known[strings.Split(tag, ",")[0]] = true
+	}
+
+	var unknown []string
+	for key := range raw {
+		if !known[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		slog.Warn("Config file has unknown keys; they are ignored (check for typos)",
+			"path", path, "keys", strings.Join(unknown, ", "))
+	}
 }
 
 func loadServerConfigFile(path string, cfg *Config) error {
@@ -231,6 +272,8 @@ func loadServerConfigFile(path string, cfg *Config) error {
 	if err := yaml.Unmarshal(data, &fc); err != nil {
 		return err
 	}
+
+	warnUnknownConfigKeys(data, path)
 
 	if fc.Port != 0 {
 		cfg.Port = fc.Port
@@ -249,6 +292,9 @@ func loadServerConfigFile(path string, cfg *Config) error {
 	}
 	if fc.AppSecretKey != "" {
 		cfg.AppSecretKey = fc.AppSecretKey
+	}
+	if fc.SessionMaxAge > 0 {
+		cfg.SessionMaxAge = fc.SessionMaxAge
 	}
 	if len(fc.AllowedOrigins) > 0 {
 		cfg.AllowedOrigins = fc.AllowedOrigins
@@ -325,6 +371,9 @@ func GenerateServerTemplate() string {
 #
 # All settings can also be set via environment variables.
 # Priority: env vars > config file > defaults
+#
+# Unknown keys are ignored with a startup warning, so check the logs if a
+# setting does not seem to apply.
 
 # HTTP port (default: 3488)
 port: 3488
@@ -343,6 +392,9 @@ port: 3488
 
 # Secret key for session encryption (CHANGE THIS in production)
 # app_secret_key: your-random-secret-here
+
+# Session lifetime in seconds (default: 604800 = 7 days)
+# session_max_age: 604800
 
 # Allowed CORS origins
 # allowed_origins:
@@ -363,6 +415,8 @@ port: 3488
 # OIDC SSO (Okta/Entra/Google/Keycloak). When set, users can sign in via your
 # IdP. Queries run via the per-connection ClickHouse service account (set it in
 # the admin UI or PUT /api/connections/{id}/sso-account). Password login still works.
+# SSO can also be configured in Admin -> SSO without touching this file;
+# values set here (or via env vars) take precedence over the admin UI.
 # oidc_issuer_url: https://accounts.google.com
 # oidc_client_id: your-client-id
 # oidc_client_secret: your-client-secret

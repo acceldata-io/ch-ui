@@ -25,9 +25,7 @@ func Recoverer(next http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"stack", string(debug.Stack()),
 				)
-				writeJSON(w, http.StatusInternalServerError, map[string]string{
-					"error": "Internal server error",
-				})
+				writeError(w, http.StatusInternalServerError, "Internal server error")
 			}
 		}()
 		next.ServeHTTP(w, r)

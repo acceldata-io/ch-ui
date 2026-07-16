@@ -67,7 +67,7 @@ func (h *QueryInsightsHandler) session(w http.ResponseWriter, r *http.Request) (
 		return chSession{}, false
 	}
 	if !h.Gateway.IsTunnelOnline(sess.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return chSession{}, false
 	}
 	password, err := crypto.Decrypt(sess.EncryptedPassword, h.Config.AppSecretKey)
@@ -183,7 +183,7 @@ func (h *QueryInsightsHandler) getSection(w http.ResponseWriter, r *http.Request
 			return
 		}
 		slog.Warn("Query insights section failed", "section", section, "error", err, "connection", cs.connID)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if rows == nil {

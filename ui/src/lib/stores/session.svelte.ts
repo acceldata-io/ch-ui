@@ -1,3 +1,4 @@
+import { toast } from 'svelte-sonner'
 import type { Session } from '../types/api'
 import { checkSession, login as apiLogin, logout as apiLogout } from '../api/auth'
 
@@ -41,6 +42,9 @@ export async function login(connectionId: string, username: string, password: st
   try {
     const res = await apiLogin({ connectionId, username, password })
     session = res.session
+    if (session?.roleNote) {
+      toast.warning(`Signed in as ${session.role}`, { description: session.roleNote, duration: 12000 })
+    }
   } catch (e: any) {
     error = e.message || 'Login failed'
     throw e

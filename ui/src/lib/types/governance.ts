@@ -24,7 +24,7 @@ export interface SyncState {
 export interface SyncResult {
   metadata?: { databases_synced: number; tables_synced: number; columns_synced: number; schema_changes: number }
   metadata_error?: string
-  query_log?: { queries_ingested: number; lineage_edges_found: number; violations_found: number; new_watermark: string }
+  query_log?: { queries_ingested: number; violations_found: number; new_watermark: string }
   query_log_error?: string
   access?: { users_synced: number; roles_synced: number; grants_synced: number; matrix_entries: number; over_permissions: number }
   access_error?: string
@@ -40,7 +40,6 @@ export interface GovernanceOverview {
   user_count: number
   role_count: number
   query_count_24h: number
-  lineage_edge_count: number
   policy_count: number
   violation_count: number
   incident_count: number
@@ -131,46 +130,12 @@ export interface QueryLogEntry {
   error_message: string | null
 }
 
-export interface TopQuery {
-  normalized_hash: string
-  count: number
-  avg_duration_ms: number
-  total_read_rows: number
-  sample_query: string
-  last_seen: string
-}
+export type QueryHarvestMode = 'auto' | 'always' | 'off'
 
-// ── Lineage ─────────────────────────────────────────────────────
-
-export interface ColumnLineageEdge {
-  source_column: string
-  target_column: string
-}
-
-export interface LineageEdge {
-  id: string
-  source_database: string
-  source_table: string
-  target_database: string
-  target_table: string
-  query_id: string
-  edge_type: string
-  ch_user: string
-  detected_at: string
-  column_edges?: ColumnLineageEdge[]
-}
-
-export interface LineageNode {
-  id: string
-  database: string
-  table: string
-  type: 'source' | 'target' | 'current' | 'materialized_view' | 'view' | string
-  columns?: GovColumn[]
-}
-
-export interface LineageGraph {
-  nodes: LineageNode[]
-  edges: LineageEdge[]
+export interface QueryHarvestSettings {
+  mode: QueryHarvestMode
+  policy_count: number
+  harvesting: boolean
 }
 
 // ── Tags ────────────────────────────────────────────────────────

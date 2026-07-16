@@ -3,14 +3,14 @@ package handlers
 import (
 	"testing"
 
-	"github.com/caioricciuti/ch-ui/internal/config"
+	"github.com/caioricciuti/ch-ui/internal/oidc"
 )
 
 func TestOIDCRoleMapping(t *testing.T) {
-	h := &AuthHandler{Config: &config.Config{
-		OIDCAdminGroups:   []string{"ch-ui-admins", "platform"},
-		OIDCAnalystGroups: []string{"data-analysts"},
-	}}
+	s := oidc.Settings{
+		AdminGroups:   []string{"ch-ui-admins", "platform"},
+		AnalystGroups: []string{"data-analysts"},
+	}
 
 	cases := []struct {
 		name   string
@@ -25,7 +25,7 @@ func TestOIDCRoleMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := h.oidcRole(tc.groups); got != tc.want {
+			if got := oidcRole(s, tc.groups); got != tc.want {
 				t.Fatalf("oidcRole(%v) = %q, want %q", tc.groups, got, tc.want)
 			}
 		})
@@ -34,15 +34,14 @@ func TestOIDCRoleMapping(t *testing.T) {
 
 func TestOIDCDomainAllowed(t *testing.T) {
 	t.Run("no restriction allows all", func(t *testing.T) {
-		h := &AuthHandler{Config: &config.Config{}}
-		if !h.oidcDomainAllowed("anyone@example.com") {
+		if !oidcDomainAllowed(oidc.Settings{}, "anyone@example.com") {
 			t.Fatal("expected all domains allowed when none configured")
 		}
 	})
 
-	h := &AuthHandler{Config: &config.Config{
-		OIDCAllowedDomains: []string{"caioricciuti.com", "acme.io"},
-	}}
+	s := oidc.Settings{
+		AllowedDomains: []string{"caioricciuti.com", "acme.io"},
+	}
 	cases := map[string]bool{
 		"caio@caioricciuti.com": true,
 		"x@ACME.IO":             true, // case-insensitive
@@ -50,7 +49,7 @@ func TestOIDCDomainAllowed(t *testing.T) {
 		"no-at-sign":            false,
 	}
 	for email, want := range cases {
-		if got := h.oidcDomainAllowed(email); got != want {
+		if got := oidcDomainAllowed(s, email); got != want {
 			t.Errorf("oidcDomainAllowed(%q) = %v, want %v", email, got, want)
 		}
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/caioricciuti/ch-ui/internal/database"
 	ghclient "github.com/caioricciuti/ch-ui/internal/github"
 	"github.com/caioricciuti/ch-ui/internal/governance"
+	"github.com/caioricciuti/ch-ui/internal/oidc"
 	"github.com/caioricciuti/ch-ui/internal/server/middleware"
 	"github.com/caioricciuti/ch-ui/internal/tunnel"
 )
@@ -27,6 +28,7 @@ type AdminHandler struct {
 	Config       *config.Config
 	GovSyncer    *governance.Syncer
 	GitHubSyncer *ghclient.Syncer
+	OIDCManager  *oidc.Manager // live OIDC provider holder, reloaded on SSO config save
 }
 
 // Routes registers all admin routes on the given chi.Router.
@@ -61,6 +63,14 @@ func (h *AdminHandler) Routes(r chi.Router) {
 	r.Get("/governance/settings", h.GetGovernanceSettings)
 	r.Put("/governance/settings", h.UpdateGovernanceSettings)
 
+	// Data retention (SQLite history pruning)
+	r.Get("/retention", h.GetRetentionSettings)
+	r.Put("/retention", h.UpdateRetentionSettings)
+
+	// SSO (OIDC) configuration (Pro)
+	r.Get("/sso", h.GetSSOSettings)
+	r.Put("/sso", h.UpdateSSOSettings)
+
 	// GitHub model sync (Pro)
 	r.Route("/github/{connectionId}", func(sub chi.Router) {
 		sub.Get("/", h.GetGitHubIntegration)
@@ -78,14 +88,14 @@ func (h *AdminHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.DB.GetUsers()
 	if err != nil {
 		slog.Error("Failed to get users", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve users"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve users")
 		return
 	}
 
 	roleOverrides, err := h.DB.GetAllUserRoles()
 	if err != nil {
 		slog.Error("Failed to get user role overrides", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user role overrides"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve user role overrides")
 		return
 	}
 
@@ -204,7 +214,7 @@ func (h *AdminHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	roles, err := h.DB.GetAllUserRoles()
 	if err != nil {
 		slog.Error("Failed to get user roles", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user roles"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve user roles")
 		return
 	}
 
@@ -222,7 +232,7 @@ func (h *AdminHandler) SetUserRole(w http.ResponseWriter, r *http.Request) {
 
 	username := chi.URLParam(r, "username")
 	if username == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Username is required"})
+		writeError(w, http.StatusBadRequest, "Username is required")
 		return
 	}
 
@@ -230,41 +240,39 @@ func (h *AdminHandler) SetUserRole(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	body.Role = strings.ToLower(strings.TrimSpace(body.Role))
 
 	validRoles := map[string]bool{"admin": true, "analyst": true, "viewer": true}
 	if !validRoles[body.Role] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Role must be one of: admin, analyst, viewer"})
+		writeError(w, http.StatusBadRequest, "Role must be one of: admin, analyst, viewer")
 		return
 	}
 
 	isTargetAdmin, err := h.DB.IsUserRole(username, "admin")
 	if err != nil {
 		slog.Error("Failed checking current role assignment", "error", err, "user", username)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate current role"})
+		writeError(w, http.StatusInternalServerError, "Failed to validate current role")
 		return
 	}
 	if isTargetAdmin && body.Role != "admin" {
 		adminCount, err := h.DB.CountUsersWithRole("admin")
 		if err != nil {
 			slog.Error("Failed counting admins", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate admin safety rule"})
+			writeError(w, http.StatusInternalServerError, "Failed to validate admin safety rule")
 			return
 		}
 		if adminCount <= 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "Cannot remove the last admin. Assign another admin first.",
-			})
+			writeError(w, http.StatusBadRequest, "Cannot remove the last admin. Assign another admin first.")
 			return
 		}
 	}
 
 	if err := h.DB.SetUserRole(username, body.Role); err != nil {
 		slog.Error("Failed to set user role", "error", err, "user", username)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to set user role"})
+		writeError(w, http.StatusInternalServerError, "Failed to set user role")
 		return
 	}
 	if err := h.DB.SetSessionsUserRole(username, body.Role); err != nil {
@@ -296,34 +304,32 @@ func (h *AdminHandler) DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 
 	username := chi.URLParam(r, "username")
 	if username == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Username is required"})
+		writeError(w, http.StatusBadRequest, "Username is required")
 		return
 	}
 
 	isTargetAdmin, err := h.DB.IsUserRole(username, "admin")
 	if err != nil {
 		slog.Error("Failed checking current role assignment", "error", err, "user", username)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate current role"})
+		writeError(w, http.StatusInternalServerError, "Failed to validate current role")
 		return
 	}
 	if isTargetAdmin {
 		adminCount, err := h.DB.CountUsersWithRole("admin")
 		if err != nil {
 			slog.Error("Failed counting admins", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate admin safety rule"})
+			writeError(w, http.StatusInternalServerError, "Failed to validate admin safety rule")
 			return
 		}
 		if adminCount <= 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "Cannot remove the last admin. Assign another admin first.",
-			})
+			writeError(w, http.StatusBadRequest, "Cannot remove the last admin. Assign another admin first.")
 			return
 		}
 	}
 
 	if err := h.DB.DeleteUserRole(username); err != nil {
 		slog.Error("Failed to delete user role", "error", err, "user", username)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete user role"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete user role")
 		return
 	}
 	if err := h.DB.SetSessionsUserRole(username, "viewer"); err != nil {
@@ -353,7 +359,7 @@ func (h *AdminHandler) GetConnections(w http.ResponseWriter, r *http.Request) {
 	conns, err := h.DB.GetConnections()
 	if err != nil {
 		slog.Error("Failed to list connections", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connections"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connections")
 		return
 	}
 
@@ -434,19 +440,19 @@ func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) GetClickHouseUsers(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	if !h.Gateway.IsTunnelOnline(session.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return
 	}
 
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 
@@ -461,7 +467,7 @@ func (h *AdminHandler) GetClickHouseUsers(w http.ResponseWriter, r *http.Request
 	)
 	if err != nil {
 		slog.Warn("Failed to query system.users", "error", err, "connection", session.ConnectionID)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -476,18 +482,18 @@ func (h *AdminHandler) GetClickHouseUsers(w http.ResponseWriter, r *http.Request
 func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	if !h.Gateway.IsTunnelOnline(session.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return
 	}
 
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 
@@ -499,13 +505,13 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 		IfNotExists  *bool    `json:"if_not_exists"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
@@ -520,17 +526,17 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 	switch authType {
 	case "no_password", "plaintext_password", "sha256_password", "double_sha1_password":
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password"})
+		writeError(w, http.StatusBadRequest, "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password")
 		return
 	}
 	if authType != "no_password" && strings.TrimSpace(body.Password) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password is required for selected auth_type"})
+		writeError(w, http.StatusBadRequest, "password is required for selected auth_type")
 		return
 	}
 
 	allRoles, roleNames, parseErr := parseDefaultRolesInput(body.DefaultRoles)
 	if parseErr != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": parseErr.Error()})
+		writeError(w, http.StatusBadRequest, parseErr.Error())
 		return
 	}
 
@@ -546,7 +552,7 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 
 	if _, err := h.Gateway.ExecuteQuery(session.ConnectionID, createSQLStr, session.ClickhouseUser, password, 30*time.Second); err != nil {
 		slog.Warn("Failed to create ClickHouse user", "error", err, "connection", session.ConnectionID, "name", name)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), createSQLStr)})
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), createSQLStr))
 		return
 	}
 
@@ -561,7 +567,7 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 		executedCommands = append(executedCommands, grantSQL)
 		if _, err := h.Gateway.ExecuteQuery(session.ConnectionID, grantSQL, session.ClickhouseUser, password, 30*time.Second); err != nil {
 			slog.Warn("ClickHouse user created but role grant failed", "error", err, "connection", session.ConnectionID, "name", name)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("user created but failed to grant roles: %v\n\nCommand:\n%s", err, grantSQL)})
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("user created but failed to grant roles: %v\n\nCommand:\n%s", err, grantSQL))
 			return
 		}
 	}
@@ -575,7 +581,7 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 		executedCommands = append(executedCommands, alterSQL)
 		if _, err := h.Gateway.ExecuteQuery(session.ConnectionID, alterSQL, session.ClickhouseUser, password, 30*time.Second); err != nil {
 			slog.Warn("ClickHouse user created but default role assignment failed", "error", err, "connection", session.ConnectionID, "name", name)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("user created but failed to set default role: %v\n\nCommand:\n%s", err, alterSQL)})
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("user created but failed to set default role: %v\n\nCommand:\n%s", err, alterSQL))
 			return
 		}
 	}
@@ -601,24 +607,24 @@ func (h *AdminHandler) CreateClickHouseUser(w http.ResponseWriter, r *http.Reque
 func (h *AdminHandler) UpdateClickHouseUserPassword(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	if !h.Gateway.IsTunnelOnline(session.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return
 	}
 
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 
 	username := strings.TrimSpace(chi.URLParam(r, "username"))
 	if username == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username is required"})
+		writeError(w, http.StatusBadRequest, "username is required")
 		return
 	}
 
@@ -628,7 +634,7 @@ func (h *AdminHandler) UpdateClickHouseUserPassword(w http.ResponseWriter, r *ht
 		IfExists *bool  `json:"if_exists"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -639,11 +645,11 @@ func (h *AdminHandler) UpdateClickHouseUserPassword(w http.ResponseWriter, r *ht
 	switch authType {
 	case "no_password", "plaintext_password", "sha256_password", "double_sha1_password":
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password"})
+		writeError(w, http.StatusBadRequest, "auth_type must be one of: no_password, plaintext_password, sha256_password, double_sha1_password")
 		return
 	}
 	if authType != "no_password" && strings.TrimSpace(body.Password) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password is required for selected auth_type"})
+		writeError(w, http.StatusBadRequest, "password is required for selected auth_type")
 		return
 	}
 
@@ -658,7 +664,7 @@ func (h *AdminHandler) UpdateClickHouseUserPassword(w http.ResponseWriter, r *ht
 
 	if _, err := h.Gateway.ExecuteQuery(session.ConnectionID, b.String(), session.ClickhouseUser, password, 30*time.Second); err != nil {
 		slog.Warn("Failed to update ClickHouse user password", "error", err, "connection", session.ConnectionID, "name", username)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), b.String())})
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), b.String()))
 		return
 	}
 
@@ -727,28 +733,28 @@ func parseDefaultRolesInput(input []string) (all bool, roles []string, err error
 func (h *AdminHandler) DeleteClickHouseUser(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 	if !h.Gateway.IsTunnelOnline(session.ConnectionID) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Tunnel is offline"})
+		writeError(w, http.StatusServiceUnavailable, "Tunnel is offline")
 		return
 	}
 
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 
 	username := strings.TrimSpace(chi.URLParam(r, "username"))
 	if username == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username is required"})
+		writeError(w, http.StatusBadRequest, "username is required")
 		return
 	}
 	if username == session.ClickhouseUser {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot delete current session user"})
+		writeError(w, http.StatusBadRequest, "cannot delete current session user")
 		return
 	}
 
@@ -765,7 +771,7 @@ func (h *AdminHandler) DeleteClickHouseUser(w http.ResponseWriter, r *http.Reque
 
 	if _, err := h.Gateway.ExecuteQuery(session.ConnectionID, sql, session.ClickhouseUser, password, 30*time.Second); err != nil {
 		slog.Warn("Failed to delete ClickHouse user", "error", err, "connection", session.ConnectionID, "name", username)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), sql)})
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("%s\n\nCommand:\n%s", err.Error(), sql))
 		return
 	}
 

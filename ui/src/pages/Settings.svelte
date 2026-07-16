@@ -4,6 +4,14 @@
   import type { LicenseInfo } from '../lib/types/api'
   import { success, error as toastError } from '../lib/stores/toast.svelte'
   import { getSession } from '../lib/stores/session.svelte'
+  import { formatDate } from '../lib/utils/format'
+  import {
+    startTrial,
+    createCheckout,
+    resendLicense,
+    requestBillingPortal,
+    LicenseServerError,
+  } from '../lib/license-server'
   import {
     Settings as SettingsIcon,
     Shield,
@@ -17,6 +25,7 @@
     Building2,
     Scale,
     KeyRound,
+    ChevronRight,
   } from 'lucide-svelte'
   import logo from '../assets/logo.png'
 
@@ -28,6 +37,18 @@
   let licenseInput = $state('')
   let inputMode = $state<'paste' | 'idle'>('idle')
   let fileInput = $state<HTMLInputElement | null>(null)
+
+  // Self-serve licensing (license.ch-ui.com)
+  let trialEmail = $state('')
+  let trialName = $state('')
+  let trialLoading = $state(false)
+  let trialHint = $state('')
+  let checkoutLoading = $state(false)
+  let manageOpen = $state(false)
+  let resendEmail = $state('')
+  let resendLoading = $state(false)
+  let portalEmail = $state('')
+  let portalLoading = $state(false)
   type SettingsTab = 'license' | 'instance' | 'legal'
   const settingsTabItems: Array<{ id: SettingsTab; label: string }> = [
     { id: 'license', label: 'License' },
@@ -111,21 +132,113 @@
     void loadLicense()
   })
 
+  async function activateLicenseText(text: string): Promise<void> {
+    const res = await apiPost<LicenseInfo>('/api/license/activate', { license: text })
+    license = res
+  }
+
   async function activate() {
     const text = licenseInput.trim()
     if (!text) return
 
     activating = true
     try {
-      const res = await apiPost<LicenseInfo>('/api/license/activate', { license: text })
-      license = res
+      await activateLicenseText(text)
       licenseInput = ''
       inputMode = 'idle'
       success('License activated successfully')
-    } catch (e: any) {
-      toastError(e.message || 'Failed to activate license')
+    } catch (e) {
+      toastError(e instanceof Error && e.message ? e.message : 'Failed to activate license')
     } finally {
       activating = false
+    }
+  }
+
+  function licenseServerMessage(e: unknown, fallback: string): string {
+    if (e instanceof Error && e.message) return e.message
+    return fallback
+  }
+
+  const trialEmailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trialEmail.trim()))
+
+  async function startFreeTrial() {
+    if (!trialEmailValid || trialLoading) return
+    trialLoading = true
+    trialHint = ''
+    try {
+      const res = await startTrial(trialEmail.trim(), trialName.trim() || undefined)
+      if (res.license) {
+        try {
+          // Older servers return the license inline: activate immediately.
+          await activateLicenseText(JSON.stringify(res.license))
+          trialEmail = ''
+          trialName = ''
+          success('Trial activated — 30 days of Pro')
+        } catch {
+          // Trial was created but local activation failed — the license was emailed.
+          success('Trial created — the license was sent to your email. Paste it below to activate.')
+        }
+      } else {
+        // Email-only delivery: prove inbox ownership, then paste to activate.
+        trialEmail = ''
+        trialName = ''
+        success('Trial created — the license was sent to your email. Paste it below to activate.')
+      }
+    } catch (e) {
+      if (e instanceof LicenseServerError && e.status === 409) {
+        toastError(e.message)
+        trialHint = 'Already used a trial with this email? Use "Resend license email" under Manage below.'
+        manageOpen = true
+      } else {
+        toastError(licenseServerMessage(e, 'Failed to start trial'))
+      }
+    } finally {
+      trialLoading = false
+    }
+  }
+
+  async function buyProLicense() {
+    if (checkoutLoading) return
+    checkoutLoading = true
+    // Open the tab synchronously so popup blockers don't eat the redirect.
+    const popup = window.open('about:blank', '_blank')
+    try {
+      const { url } = await createCheckout()
+      if (popup) popup.location.href = url
+      else window.open(url, '_blank', 'noopener')
+    } catch (e) {
+      popup?.close()
+      toastError(licenseServerMessage(e, 'Could not start checkout — use the pricing page instead'))
+    } finally {
+      checkoutLoading = false
+    }
+  }
+
+  async function submitResend() {
+    const email = resendEmail.trim()
+    if (!email || resendLoading) return
+    resendLoading = true
+    try {
+      const res = await resendLicense(email)
+      success(res.message || 'If a license exists for this email, it has been re-sent.')
+    } catch (e) {
+      toastError(licenseServerMessage(e, 'Failed to resend license email'))
+    } finally {
+      resendLoading = false
+    }
+  }
+
+  async function submitPortal() {
+    const email = portalEmail.trim()
+    if (!email || portalLoading) return
+    portalLoading = true
+    try {
+      const res = await requestBillingPortal(email)
+      success(res.message || 'Billing portal link sent — check your email.')
+    } catch (e) {
+      toastError(licenseServerMessage(e, 'Failed to request billing portal link'))
+    } finally {
+      portalLoading = false
     }
   }
 
@@ -154,11 +267,6 @@
     }
     reader.readAsText(file)
     target.value = ''
-  }
-
-  function formatDate(date: string | undefined) {
-    if (!date) return '—'
-    return new Date(date).toLocaleDateString()
   }
 
   function openFilePicker() {
@@ -314,18 +422,85 @@
             <p class="text-sm text-gray-500 dark:text-gray-400">
               Core capabilities are enabled under Apache-2.0. Activate Pro to unlock proprietary modules.
             </p>
+
+            <div class="ds-panel-muted p-4 space-y-3">
+              <div class="flex items-center gap-2">
+                <Sparkles size={14} class="text-ch-orange" />
+                <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Start free 30-day trial</h3>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Try every Pro feature for 30 days — no card required. One trial per email; the license is also sent to your inbox.
+              </p>
+              <div class="flex items-end gap-2 flex-wrap">
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Email</span>
+                  <input
+                    type="email"
+                    bind:value={trialEmail}
+                    placeholder="you@company.com"
+                    class="ds-input-sm w-56"
+                  />
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Name (optional)</span>
+                  <input
+                    type="text"
+                    bind:value={trialName}
+                    placeholder="Your name"
+                    class="ds-input-sm w-44"
+                  />
+                </label>
+                <button
+                  onclick={startFreeTrial}
+                  disabled={trialLoading || !trialEmailValid}
+                  class="ds-btn-primary px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {trialLoading ? 'Starting trial...' : 'Start free trial'}
+                </button>
+              </div>
+              {#if trialHint}
+                <p class="text-xs text-amber-600 dark:text-amber-400">{trialHint}</p>
+              {/if}
+            </div>
           </div>
         {/if}
 
         {#if !proActive}
           <div class="pt-3 border-t border-gray-200 dark:border-gray-800 space-y-3">
-            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Activate Pro License</h3>
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Activate Pro License</h3>
+              <div class="flex items-center gap-3">
+                <button
+                  onclick={buyProLicense}
+                  disabled={checkoutLoading}
+                  class="ds-btn-primary px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {checkoutLoading ? 'Opening checkout...' : 'Buy Pro License'} <ExternalLink size={13} />
+                </button>
+                <a
+                  href="https://ch-ui.com/pricing?utm_source=app&utm_medium=license_page"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline underline-offset-2"
+                >
+                  or see pricing
+                </a>
+                <a
+                  href="https://ch-ui.com/license"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline underline-offset-2"
+                >
+                  Lost your license? Enterprise?
+                </a>
+              </div>
+            </div>
 
             {#if inputMode === 'idle'}
               <div class="flex items-center gap-2 flex-wrap">
                 <button
                   onclick={() => inputMode = 'paste'}
-                  class="ds-btn-primary px-4 py-2"
+                  class="ds-btn-outline px-4 py-2"
                 >
                   Paste License JSON
                 </button>
@@ -372,6 +547,65 @@
             {/if}
           </div>
         {/if}
+
+        <div class="pt-3 border-t border-gray-200 dark:border-gray-800">
+          <button
+            onclick={() => manageOpen = !manageOpen}
+            class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            aria-expanded={manageOpen}
+          >
+            <ChevronRight size={12} class="transition-transform {manageOpen ? 'rotate-90' : ''}" />
+            Manage license & billing
+          </button>
+
+          {#if manageOpen}
+            <div class="mt-3 space-y-2">
+              <div class="ds-panel-muted p-3 flex items-end justify-between gap-3 flex-wrap">
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Resend license email</p>
+                  <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Get your license file re-sent to the email used at purchase or trial.</p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="email"
+                    bind:value={resendEmail}
+                    placeholder="you@company.com"
+                    class="ds-input-sm w-52"
+                  />
+                  <button
+                    onclick={submitResend}
+                    disabled={resendLoading || !resendEmail.trim()}
+                    class="ds-btn-outline px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {resendLoading ? 'Sending...' : 'Resend'}
+                  </button>
+                </div>
+              </div>
+
+              <div class="ds-panel-muted p-3 flex items-end justify-between gap-3 flex-wrap">
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Manage billing</p>
+                  <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Receive a secure Stripe billing-portal link by email.</p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="email"
+                    bind:value={portalEmail}
+                    placeholder="you@company.com"
+                    class="ds-input-sm w-52"
+                  />
+                  <button
+                    onclick={submitPortal}
+                    disabled={portalLoading || !portalEmail.trim()}
+                    class="ds-btn-outline px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {portalLoading ? 'Sending...' : 'Email link'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
 
         <input
           bind:this={fileInput}

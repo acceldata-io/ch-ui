@@ -31,14 +31,13 @@ func RequirePro(cfg *config.Config) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-				writeJSON(w, http.StatusPaymentRequired, map[string]string{
-					"error":  "Pro license expired — read-only grace period. Renew to restore write access to Pro features.",
-					"status": "grace",
+				writeJSON(w, http.StatusPaymentRequired, map[string]interface{}{
+					"success": false,
+					"error":   "Pro license expired — read-only grace period. Renew to restore write access to Pro features.",
+					"status":  "grace",
 				})
 			default:
-				writeJSON(w, http.StatusPaymentRequired, map[string]string{
-					"error": "Pro license required",
-				})
+				writeError(w, http.StatusPaymentRequired, "Pro license required")
 			}
 		})
 	}

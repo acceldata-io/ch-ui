@@ -9,8 +9,8 @@ import type {
   GovColumn,
   SchemaChange,
   QueryLogEntry,
-  TopQuery,
-  LineageGraph,
+  QueryHarvestMode,
+  QueryHarvestSettings,
   TagEntry,
   ChUser,
   ChRole,
@@ -79,8 +79,6 @@ export function fetchTableDetail(database: string, table: string) {
     tags: TagEntry[]
     recent_queries?: QueryLogEntry[]
     queries?: QueryLogEntry[]
-    incoming: any[]
-    outgoing: any[]
   }>(`${BASE}/tables/${encodeURIComponent(database)}/${encodeURIComponent(table)}`)
     .then((res: any) => ({
       ...res,
@@ -124,43 +122,12 @@ export function fetchQueryLog(params?: { user?: string; table?: string; limit?: 
   return apiGet<{ entries: QueryLogEntry[]; total: number }>(`${BASE}/query-log${q ? '?' + q : ''}`)
 }
 
-export function fetchTopQueries(limit = 20) {
-  return apiGet<{ queries?: TopQuery[]; top_queries?: any[] }>(`${BASE}/query-log/top?limit=${limit}`)
-    .then((res: any) => {
-      const normalized = (res?.queries ?? res?.top_queries ?? []).map((q: any) => ({
-        normalized_hash: q?.normalized_hash ?? '',
-        count: Number(q?.count ?? q?.execution_count ?? 0),
-        avg_duration_ms: Number(q?.avg_duration_ms ?? q?.avg_duration ?? 0),
-        total_read_rows: Number(q?.total_read_rows ?? 0),
-        sample_query: q?.sample_query ?? q?.normalized_query ?? '',
-        last_seen: q?.last_seen ?? '',
-      })) as TopQuery[]
-      return { queries: normalized }
-    })
+export function fetchQueryHarvestSettings() {
+  return apiGet<QueryHarvestSettings>(`${BASE}/query-harvest`)
 }
 
-// ── Lineage ─────────────────────────────────────────────────────
-
-export function fetchLineage(database: string, table: string) {
-  return apiGet<{ graph?: LineageGraph } | LineageGraph>(`${BASE}/lineage?database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`)
-    .then((res: any) => res?.graph ?? res)
-}
-
-export function fetchLineageGraph(includeColumns = false) {
-  const qs = includeColumns ? '?include_columns=true' : ''
-  return apiGet<{ graph?: LineageGraph } | LineageGraph>(`${BASE}/lineage/graph${qs}`)
-    .then((res: any) => res?.graph ?? res)
-}
-
-export function fetchViewGraph() {
-  return apiGet<{ graph?: LineageGraph } | LineageGraph>(`${BASE}/view-graph`)
-    .then((res: any) => res?.graph ?? res)
-}
-
-export function fetchLineageWithColumns(database: string, table: string) {
-  return apiGet<{ graph?: LineageGraph } | LineageGraph>(
-    `${BASE}/lineage?database=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&include_columns=true`
-  ).then((res: any) => res?.graph ?? res)
+export function updateQueryHarvestMode(mode: QueryHarvestMode) {
+  return apiPut<QueryHarvestSettings>(`${BASE}/query-harvest`, { mode })
 }
 
 export function fetchQueryByQueryID(queryId: string) {

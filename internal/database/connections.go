@@ -10,16 +10,43 @@ import (
 	"github.com/google/uuid"
 )
 
-// Connection represents a connection record (agent or embedded).
+// Connection types.
+const (
+	// ConnectionTypeDirect runs an in-process connector against clickhouse_url.
+	ConnectionTypeDirect = "direct"
+	// ConnectionTypeTunnel waits for a remote ch-ui agent to dial in.
+	ConnectionTypeTunnel = "tunnel"
+)
+
+// Connection represents a connection record (direct or tunnel).
 type Connection struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	TunnelToken  string  `json:"tunnel_token"`
-	IsEmbedded   bool    `json:"is_embedded"`
-	Status       string  `json:"status"`
-	LastSeenAt   *string `json:"last_seen_at"`
-	HostInfoJSON *string `json:"host_info"`
-	CreatedAt    string  `json:"created_at"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	TunnelToken   string  `json:"tunnel_token"`
+	IsEmbedded    bool    `json:"is_embedded"`
+	Type          string  `json:"type"`
+	ClickHouseURL string  `json:"clickhouse_url,omitempty"`
+	Status        string  `json:"status"`
+	LastSeenAt    *string `json:"last_seen_at"`
+	HostInfoJSON  *string `json:"host_info"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+const connectionColumns = "id, name, tunnel_token, is_embedded, type, clickhouse_url, status, last_seen_at, host_info, created_at"
+
+// scanConnection scans a connection row from any row scanner (sql.Row / sql.Rows).
+func scanConnection(scan func(dest ...any) error) (*Connection, error) {
+	var c Connection
+	var lastSeenAt, hostInfo, chURL sql.NullString
+	var isEmbedded int
+	if err := scan(&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Type, &chURL, &c.Status, &lastSeenAt, &hostInfo, &c.CreatedAt); err != nil {
+		return nil, err
+	}
+	c.IsEmbedded = isEmbedded == 1
+	c.ClickHouseURL = chURL.String
+	c.LastSeenAt = nullStringToPtr(lastSeenAt)
+	c.HostInfoJSON = nullStringToPtr(hostInfo)
+	return &c, nil
 }
 
 // GetConnectionSSOAccount returns the per-connection ClickHouse service account
@@ -74,7 +101,7 @@ type HostInfo struct {
 // GetConnections retrieves all connections ordered by creation date.
 func (db *DB) GetConnections() ([]Connection, error) {
 	rows, err := db.conn.Query(
-		"SELECT id, name, tunnel_token, is_embedded, status, last_seen_at, host_info, created_at FROM connections ORDER BY created_at ASC",
+		"SELECT " + connectionColumns + " FROM connections ORDER BY created_at ASC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get connections: %w", err)
@@ -83,16 +110,36 @@ func (db *DB) GetConnections() ([]Connection, error) {
 
 	var conns []Connection
 	for rows.Next() {
-		var c Connection
-		var lastSeenAt, hostInfo sql.NullString
-		var isEmbedded int
-		if err := rows.Scan(&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Status, &lastSeenAt, &hostInfo, &c.CreatedAt); err != nil {
+		c, err := scanConnection(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scan connection: %w", err)
 		}
-		c.IsEmbedded = isEmbedded == 1
-		c.LastSeenAt = nullStringToPtr(lastSeenAt)
-		c.HostInfoJSON = nullStringToPtr(hostInfo)
-		conns = append(conns, c)
+		conns = append(conns, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate connection rows: %w", err)
+	}
+	return conns, nil
+}
+
+// GetDirectConnections retrieves all direct (in-process connector) connections.
+func (db *DB) GetDirectConnections() ([]Connection, error) {
+	rows, err := db.conn.Query(
+		"SELECT "+connectionColumns+" FROM connections WHERE type = ? ORDER BY created_at ASC",
+		ConnectionTypeDirect,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get direct connections: %w", err)
+	}
+	defer rows.Close()
+
+	var conns []Connection
+	for rows.Next() {
+		c, err := scanConnection(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan connection: %w", err)
+		}
+		conns = append(conns, *c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate connection rows: %w", err)
@@ -102,83 +149,45 @@ func (db *DB) GetConnections() ([]Connection, error) {
 
 // GetConnectionByToken retrieves a connection by its tunnel token.
 func (db *DB) GetConnectionByToken(token string) (*Connection, error) {
-	row := db.conn.QueryRow(
-		"SELECT id, name, tunnel_token, is_embedded, status, last_seen_at, host_info, created_at FROM connections WHERE tunnel_token = ?",
-		token,
-	)
-
-	var c Connection
-	var lastSeenAt, hostInfo sql.NullString
-	var isEmbedded int
-
-	err := row.Scan(
-		&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Status,
-		&lastSeenAt, &hostInfo, &c.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get connection by token: %w", err)
-	}
-
-	c.IsEmbedded = isEmbedded == 1
-	c.LastSeenAt = nullStringToPtr(lastSeenAt)
-	c.HostInfoJSON = nullStringToPtr(hostInfo)
-	return &c, nil
+	return db.getConnectionRow("SELECT "+connectionColumns+" FROM connections WHERE tunnel_token = ?", token)
 }
 
 // GetConnectionByTokenCtx retrieves a connection by its tunnel token using a context.
 // This is used by tunnel auth to avoid hanging while SQLite is busy.
 func (db *DB) GetConnectionByTokenCtx(ctx context.Context, token string) (*Connection, error) {
 	row := db.conn.QueryRowContext(ctx,
-		"SELECT id, name, tunnel_token, is_embedded, status, last_seen_at, host_info, created_at FROM connections WHERE tunnel_token = ?",
-		token,
+		"SELECT "+connectionColumns+" FROM connections WHERE tunnel_token = ?", token,
 	)
-
-	var c Connection
-	var lastSeenAt, hostInfo sql.NullString
-	var isEmbedded int
-
-	err := row.Scan(
-		&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Status,
-		&lastSeenAt, &hostInfo, &c.CreatedAt,
-	)
+	c, err := scanConnection(row.Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get connection by token: %w", err)
 	}
-
-	c.IsEmbedded = isEmbedded == 1
-	c.LastSeenAt = nullStringToPtr(lastSeenAt)
-	c.HostInfoJSON = nullStringToPtr(hostInfo)
-	return &c, nil
+	return c, nil
 }
 
 // GetConnectionByID retrieves a connection by its ID.
 func (db *DB) GetConnectionByID(id string) (*Connection, error) {
-	row := db.conn.QueryRow(
-		"SELECT id, name, tunnel_token, is_embedded, status, last_seen_at, host_info, created_at FROM connections WHERE id = ?", id,
-	)
+	return db.getConnectionRow("SELECT "+connectionColumns+" FROM connections WHERE id = ?", id)
+}
 
-	var c Connection
-	var lastSeenAt, hostInfo sql.NullString
-	var isEmbedded int
+// GetEmbeddedConnection retrieves the embedded connection (if any).
+func (db *DB) GetEmbeddedConnection() (*Connection, error) {
+	return db.getConnectionRow("SELECT " + connectionColumns + " FROM connections WHERE is_embedded = 1 LIMIT 1")
+}
 
-	err := row.Scan(&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Status, &lastSeenAt, &hostInfo, &c.CreatedAt)
+func (db *DB) getConnectionRow(query string, args ...any) (*Connection, error) {
+	row := db.conn.QueryRow(query, args...)
+	c, err := scanConnection(row.Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get connection by id: %w", err)
+		return nil, fmt.Errorf("get connection: %w", err)
 	}
-
-	c.IsEmbedded = isEmbedded == 1
-	c.LastSeenAt = nullStringToPtr(lastSeenAt)
-	c.HostInfoJSON = nullStringToPtr(hostInfo)
-	return &c, nil
+	return c, nil
 }
 
 // GetConnectionCount returns the total number of connections.
@@ -191,16 +200,29 @@ func (db *DB) GetConnectionCount() (int, error) {
 	return count, nil
 }
 
+// CreateConnectionParams describes a new connection record.
+type CreateConnectionParams struct {
+	Name          string
+	TunnelToken   string
+	IsEmbedded    bool
+	Type          string // ConnectionTypeDirect or ConnectionTypeTunnel
+	ClickHouseURL string // required for direct connections
+}
+
 // CreateConnection creates a new connection and returns its ID.
-func (db *DB) CreateConnection(name, token string, isEmbedded bool) (string, error) {
+func (db *DB) CreateConnection(p CreateConnectionParams) (string, error) {
 	id := uuid.NewString()
 	embedded := 0
-	if isEmbedded {
+	if p.IsEmbedded {
 		embedded = 1
 	}
+	connType := p.Type
+	if connType == "" {
+		connType = ConnectionTypeTunnel
+	}
 	_, err := db.conn.Exec(
-		"INSERT INTO connections (id, name, tunnel_token, is_embedded) VALUES (?, ?, ?, ?)",
-		id, name, token, embedded,
+		"INSERT INTO connections (id, name, tunnel_token, is_embedded, type, clickhouse_url) VALUES (?, ?, ?, ?, ?, ?)",
+		id, p.Name, p.TunnelToken, embedded, connType, p.ClickHouseURL,
 	)
 	if err != nil {
 		return "", fmt.Errorf("create connection: %w", err)
@@ -248,6 +270,15 @@ func (db *DB) UpdateConnectionName(id, newName string) error {
 	return nil
 }
 
+// UpdateConnectionClickHouseURL updates the target URL of a direct connection.
+func (db *DB) UpdateConnectionClickHouseURL(id, url string) error {
+	_, err := db.conn.Exec("UPDATE connections SET clickhouse_url = ? WHERE id = ?", url, id)
+	if err != nil {
+		return fmt.Errorf("update connection clickhouse url: %w", err)
+	}
+	return nil
+}
+
 // UpdateConnectionHostInfo stores the host info JSON for a connection.
 func (db *DB) UpdateConnectionHostInfo(connId string, info HostInfo) error {
 	data, err := json.Marshal(info)
@@ -286,28 +317,4 @@ func (db *DB) GetConnectionHostInfo(connId string) (*HostInfo, error) {
 		return nil, nil
 	}
 	return &info, nil
-}
-
-// GetEmbeddedConnection retrieves the embedded connection (if any).
-func (db *DB) GetEmbeddedConnection() (*Connection, error) {
-	row := db.conn.QueryRow(
-		"SELECT id, name, tunnel_token, is_embedded, status, last_seen_at, host_info, created_at FROM connections WHERE is_embedded = 1 LIMIT 1",
-	)
-
-	var c Connection
-	var lastSeenAt, hostInfo sql.NullString
-	var isEmbedded int
-
-	err := row.Scan(&c.ID, &c.Name, &c.TunnelToken, &isEmbedded, &c.Status, &lastSeenAt, &hostInfo, &c.CreatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get embedded connection: %w", err)
-	}
-
-	c.IsEmbedded = isEmbedded == 1
-	c.LastSeenAt = nullStringToPtr(lastSeenAt)
-	c.HostInfoJSON = nullStringToPtr(hostInfo)
-	return &c, nil
 }

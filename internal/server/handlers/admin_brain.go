@@ -144,7 +144,7 @@ func applyModelBulkAction(db *database.DB, providerID, action string) (int, erro
 func (h *AdminHandler) ListBrainProviders(w http.ResponseWriter, r *http.Request) {
 	providers, err := h.DB.GetBrainProviders()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list providers"})
+		writeError(w, http.StatusInternalServerError, "Failed to list providers")
 		return
 	}
 	if providers == nil {
@@ -165,18 +165,18 @@ func (h *AdminHandler) CreateBrainProvider(w http.ResponseWriter, r *http.Reques
 		IsDefault *bool  `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider name is required"})
+		writeError(w, http.StatusBadRequest, "Provider name is required")
 		return
 	}
 	kind, ok := normalizeProviderKind(body.Kind)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider kind must be openai, openai_compatible, or ollama"})
+		writeError(w, http.StatusBadRequest, "Provider kind must be openai, openai_compatible, or ollama")
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *AdminHandler) CreateBrainProvider(w http.ResponseWriter, r *http.Reques
 	if strings.TrimSpace(body.APIKey) != "" {
 		encrypted, err := crypto.Encrypt(strings.TrimSpace(body.APIKey), h.Config.AppSecretKey)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to encrypt API key"})
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 			return
 		}
 		encryptedKey = &encrypted
@@ -205,7 +205,7 @@ func (h *AdminHandler) CreateBrainProvider(w http.ResponseWriter, r *http.Reques
 	}
 	providerID, err := h.DB.CreateBrainProvider(name, kind, body.BaseURL, encryptedKey, isActive, isDefault, actor)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create provider"})
+		writeError(w, http.StatusInternalServerError, "Failed to create provider")
 		return
 	}
 
@@ -223,17 +223,17 @@ func (h *AdminHandler) UpdateBrainProvider(w http.ResponseWriter, r *http.Reques
 	session := middleware.GetSession(r)
 	providerID := chi.URLParam(r, "id")
 	if strings.TrimSpace(providerID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider ID is required"})
+		writeError(w, http.StatusBadRequest, "Provider ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetBrainProviderByID(providerID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load provider"})
+		writeError(w, http.StatusInternalServerError, "Failed to load provider")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Provider not found"})
+		writeError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -246,7 +246,7 @@ func (h *AdminHandler) UpdateBrainProvider(w http.ResponseWriter, r *http.Reques
 		IsDefault *bool   `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -258,7 +258,7 @@ func (h *AdminHandler) UpdateBrainProvider(w http.ResponseWriter, r *http.Reques
 	if body.Kind != nil {
 		n, ok := normalizeProviderKind(*body.Kind)
 		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider kind must be openai, openai_compatible, or ollama"})
+			writeError(w, http.StatusBadRequest, "Provider kind must be openai, openai_compatible, or ollama")
 			return
 		}
 		kind = n
@@ -286,7 +286,7 @@ func (h *AdminHandler) UpdateBrainProvider(w http.ResponseWriter, r *http.Reques
 		if strings.TrimSpace(*body.APIKey) != "" {
 			encrypted, encErr := crypto.Encrypt(strings.TrimSpace(*body.APIKey), h.Config.AppSecretKey)
 			if encErr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to encrypt API key"})
+				writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 				return
 			}
 			encryptedKey = &encrypted
@@ -294,7 +294,7 @@ func (h *AdminHandler) UpdateBrainProvider(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.DB.UpdateBrainProvider(providerID, name, kind, baseURL, encryptedKey, updateAPIKey, isActive, isDefault); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update provider"})
+		writeError(w, http.StatusInternalServerError, "Failed to update provider")
 		return
 	}
 
@@ -316,12 +316,12 @@ func (h *AdminHandler) DeleteBrainProvider(w http.ResponseWriter, r *http.Reques
 	session := middleware.GetSession(r)
 	providerID := chi.URLParam(r, "id")
 	if strings.TrimSpace(providerID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider ID is required"})
+		writeError(w, http.StatusBadRequest, "Provider ID is required")
 		return
 	}
 
 	if err := h.DB.DeleteBrainProvider(providerID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete provider"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete provider")
 		return
 	}
 
@@ -343,23 +343,23 @@ func (h *AdminHandler) SyncBrainProviderModels(w http.ResponseWriter, r *http.Re
 	session := middleware.GetSession(r)
 	providerID := chi.URLParam(r, "id")
 	if strings.TrimSpace(providerID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider ID is required"})
+		writeError(w, http.StatusBadRequest, "Provider ID is required")
 		return
 	}
 
 	provider, err := h.DB.GetBrainProviderByID(providerID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load provider"})
+		writeError(w, http.StatusInternalServerError, "Failed to load provider")
 		return
 	}
 	if provider == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Provider not found"})
+		writeError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
 	adapter, err := braincore.NewProvider(provider.Kind)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -370,7 +370,7 @@ func (h *AdminHandler) SyncBrainProviderModels(w http.ResponseWriter, r *http.Re
 	if provider.EncryptedAPIKey != nil {
 		decrypted, decErr := crypto.Decrypt(*provider.EncryptedAPIKey, h.Config.AppSecretKey)
 		if decErr != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt provider API key"})
+			writeError(w, http.StatusInternalServerError, "Failed to decrypt provider API key")
 			return
 		}
 		cfg.APIKey = decrypted
@@ -381,7 +381,7 @@ func (h *AdminHandler) SyncBrainProviderModels(w http.ResponseWriter, r *http.Re
 
 	modelNames, err := adapter.ListModels(ctx, cfg)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if len(modelNames) == 0 {
@@ -443,7 +443,7 @@ func (h *AdminHandler) SyncBrainProviderModels(w http.ResponseWriter, r *http.Re
 func (h *AdminHandler) ListBrainModels(w http.ResponseWriter, r *http.Request) {
 	models, err := h.DB.GetBrainModelsWithProvider(false)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list models"})
+		writeError(w, http.StatusInternalServerError, "Failed to list models")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "models": models})
@@ -453,17 +453,17 @@ func (h *AdminHandler) UpdateBrainModel(w http.ResponseWriter, r *http.Request) 
 	session := middleware.GetSession(r)
 	modelID := chi.URLParam(r, "id")
 	if strings.TrimSpace(modelID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Model ID is required"})
+		writeError(w, http.StatusBadRequest, "Model ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetBrainModelByID(modelID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load model"})
+		writeError(w, http.StatusInternalServerError, "Failed to load model")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Model not found"})
+		writeError(w, http.StatusNotFound, "Model not found")
 		return
 	}
 
@@ -473,7 +473,7 @@ func (h *AdminHandler) UpdateBrainModel(w http.ResponseWriter, r *http.Request) 
 		IsDefault   *bool   `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -500,7 +500,7 @@ func (h *AdminHandler) UpdateBrainModel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.DB.UpdateBrainModel(modelID, displayName, isActive, isDefault); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update model"})
+		writeError(w, http.StatusInternalServerError, "Failed to update model")
 		return
 	}
 
@@ -526,24 +526,24 @@ func (h *AdminHandler) BulkUpdateBrainModels(w http.ResponseWriter, r *http.Requ
 		Action     string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	providerID := strings.TrimSpace(body.ProviderID)
 	if providerID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "providerId is required"})
+		writeError(w, http.StatusBadRequest, "providerId is required")
 		return
 	}
 	action := strings.TrimSpace(body.Action)
 	if action != "deactivate_all" && action != "activate_all" && action != "activate_recommended" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be one of: deactivate_all, activate_all, activate_recommended"})
+		writeError(w, http.StatusBadRequest, "action must be one of: deactivate_all, activate_all, activate_recommended")
 		return
 	}
 
 	updated, err := applyModelBulkAction(h.DB, providerID, action)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to apply bulk model action"})
+		writeError(w, http.StatusInternalServerError, "Failed to apply bulk model action")
 		return
 	}
 
@@ -567,7 +567,7 @@ func (h *AdminHandler) BulkUpdateBrainModels(w http.ResponseWriter, r *http.Requ
 func (h *AdminHandler) ListBrainSkills(w http.ResponseWriter, r *http.Request) {
 	skills, err := h.DB.GetBrainSkills()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list skills"})
+		writeError(w, http.StatusInternalServerError, "Failed to list skills")
 		return
 	}
 	if skills == nil {
@@ -586,14 +586,14 @@ func (h *AdminHandler) CreateBrainSkill(w http.ResponseWriter, r *http.Request) 
 		IsDefault *bool  `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	content := strings.TrimSpace(body.Content)
 	if name == "" || content == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name and content are required"})
+		writeError(w, http.StatusBadRequest, "Name and content are required")
 		return
 	}
 
@@ -612,7 +612,7 @@ func (h *AdminHandler) CreateBrainSkill(w http.ResponseWriter, r *http.Request) 
 	}
 	id, err := h.DB.CreateBrainSkill(name, content, actor, isActive, isDefault)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create skill"})
+		writeError(w, http.StatusInternalServerError, "Failed to create skill")
 		return
 	}
 
@@ -630,17 +630,17 @@ func (h *AdminHandler) UpdateBrainSkill(w http.ResponseWriter, r *http.Request) 
 	session := middleware.GetSession(r)
 	skillID := chi.URLParam(r, "id")
 	if strings.TrimSpace(skillID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Skill ID is required"})
+		writeError(w, http.StatusBadRequest, "Skill ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetBrainSkillByID(skillID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load skill"})
+		writeError(w, http.StatusInternalServerError, "Failed to load skill")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Skill not found"})
+		writeError(w, http.StatusNotFound, "Skill not found")
 		return
 	}
 
@@ -651,7 +651,7 @@ func (h *AdminHandler) UpdateBrainSkill(w http.ResponseWriter, r *http.Request) 
 		IsDefault *bool   `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -673,12 +673,12 @@ func (h *AdminHandler) UpdateBrainSkill(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(content) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name and content are required"})
+		writeError(w, http.StatusBadRequest, "Name and content are required")
 		return
 	}
 
 	if err := h.DB.UpdateBrainSkill(skillID, name, content, isActive, isDefault); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update skill"})
+		writeError(w, http.StatusInternalServerError, "Failed to update skill")
 		return
 	}
 

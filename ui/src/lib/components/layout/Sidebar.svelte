@@ -48,6 +48,7 @@
     label: string
     icon: typeof Bookmark
     pro?: boolean
+    adminOnly?: boolean
   }
   interface NavItemExternal {
     type: 'external'
@@ -68,7 +69,7 @@
     { type: 'governance', label: 'Governance', icon: Scale, pro: true },
     { type: 'cluster-health', label: 'Cluster Health', icon: HeartPulse, pro: true },
     { type: 'query-insights', label: 'Query Insights', icon: Gauge, pro: true },
-    { type: 'admin', label: 'Admin', icon: Shield },
+    { type: 'admin', label: 'Admin', icon: Shield, adminOnly: true },
     { type: 'settings', label: 'License', icon: Settings },
     { type: 'external', label: 'CH-UI Docs', icon: ExternalLink, href: 'https://ch-ui.com/docs' },
   ]
@@ -89,6 +90,9 @@
   let dragging = $state(false)
   const licensedPro = $derived(isProActive())
   const activeTab = $derived(getActiveTab())
+  const visibleNavItems = $derived(
+    navItems.filter((item) => item.type === 'external' || !item.adminOnly || session?.role === 'admin'),
+  )
 
   async function loadNodeAndClusterInfo() {
     try {
@@ -196,7 +200,7 @@
       </div>
       <div class="flex-1"></div>
       <div class="flex flex-col items-center py-2 gap-1 border-t border-gray-200 dark:border-gray-800">
-        {#each navItems as item}
+        {#each visibleNavItems as item}
           {#if item.type === 'external'}
             <a
               class="p-2 rounded transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-200/40 dark:hover:bg-gray-800/40"
@@ -289,7 +293,7 @@
 
           {#if !menuCollapsed}
             <div class="py-1.5">
-              {#each navItems as item}
+              {#each visibleNavItems as item}
                 {#if item.type === 'external'}
                   <a
                     class="flex items-center gap-2.5 w-full px-3.5 py-2 text-[13px] font-medium transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-200/40 dark:hover:bg-gray-800/40"

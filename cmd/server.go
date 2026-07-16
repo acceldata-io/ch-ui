@@ -226,13 +226,16 @@ func runServer(cmd *cobra.Command) error {
 		slog.Info("License loaded from database")
 	}
 
-	// Create and start server
-	srv := server.New(cfg, db, FrontendFS)
+	// Connector manager runs one in-process connector per direct connection.
+	agents := embedded.NewManager(db, cfg.Port)
 
-	// Start embedded agent (connects to local ClickHouse if configured)
-	ea, err := embedded.Start(db, cfg.Port, cfg.ClickHouseURL, cfg.ConnectionName)
-	if err != nil {
-		slog.Warn("Failed to start embedded agent", "error", err)
+	// Create and start server
+	srv := server.New(cfg, db, FrontendFS, agents)
+
+	// Launch connectors (embedded connection from config + any direct
+	// connections created at runtime).
+	if err := agents.Start(cfg.ClickHouseURL, cfg.ConnectionName); err != nil {
+		slog.Warn("Failed to start direct connectors", "error", err)
 	}
 
 	// Graceful shutdown
@@ -246,15 +249,11 @@ func runServer(cmd *cobra.Command) error {
 
 	select {
 	case err := <-errCh:
-		if ea != nil {
-			ea.Stop()
-		}
+		agents.StopAll()
 		return err
 	case <-ctx.Done():
 		slog.Info("Shutting down server...")
-		if ea != nil {
-			ea.Stop()
-		}
+		agents.StopAll()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), serverStopTimeout)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)

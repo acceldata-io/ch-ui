@@ -77,7 +77,7 @@ func (h *DashboardsHandler) ListDashboards(w http.ResponseWriter, r *http.Reques
 	dashboards, err := h.DB.GetDashboards()
 	if err != nil {
 		slog.Error("Failed to list dashboards", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list dashboards"})
+		writeError(w, http.StatusInternalServerError, "Failed to list dashboards")
 		return
 	}
 
@@ -92,18 +92,18 @@ func (h *DashboardsHandler) ListDashboards(w http.ResponseWriter, r *http.Reques
 func (h *DashboardsHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID is required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID is required")
 		return
 	}
 
 	dashboard, err := h.DB.GetDashboardByID(id)
 	if err != nil {
 		slog.Error("Failed to get dashboard", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to get dashboard")
 		return
 	}
 	if dashboard == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
@@ -126,7 +126,7 @@ func (h *DashboardsHandler) GetDashboard(w http.ResponseWriter, r *http.Request)
 func (h *DashboardsHandler) CreateDashboard(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -135,20 +135,20 @@ func (h *DashboardsHandler) CreateDashboard(w http.ResponseWriter, r *http.Reque
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
 	id, err := h.DB.CreateDashboard(name, strings.TrimSpace(body.Description), session.ClickhouseUser)
 	if err != nil {
 		slog.Error("Failed to create dashboard", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to create dashboard")
 		return
 	}
 
@@ -171,24 +171,24 @@ func (h *DashboardsHandler) CreateDashboard(w http.ResponseWriter, r *http.Reque
 func (h *DashboardsHandler) UpdateDashboard(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID is required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetDashboardByID(id)
 	if err != nil {
 		slog.Error("Failed to get dashboard for update", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to get dashboard")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *DashboardsHandler) UpdateDashboard(w http.ResponseWriter, r *http.Reque
 		Description *string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
@@ -211,7 +211,7 @@ func (h *DashboardsHandler) UpdateDashboard(w http.ResponseWriter, r *http.Reque
 	if body.Name != nil {
 		n := strings.TrimSpace(*body.Name)
 		if n == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name cannot be empty"})
+			writeError(w, http.StatusBadRequest, "Name cannot be empty")
 			return
 		}
 		name = n
@@ -223,13 +223,13 @@ func (h *DashboardsHandler) UpdateDashboard(w http.ResponseWriter, r *http.Reque
 	}
 
 	if !changed {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No fields to update"})
+		writeError(w, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
 	if err := h.DB.UpdateDashboard(id, name, description); err != nil {
 		slog.Error("Failed to update dashboard", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to update dashboard")
 		return
 	}
 
@@ -252,30 +252,30 @@ func (h *DashboardsHandler) UpdateDashboard(w http.ResponseWriter, r *http.Reque
 func (h *DashboardsHandler) DeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID is required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetDashboardByID(id)
 	if err != nil {
 		slog.Error("Failed to get dashboard for delete", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to get dashboard")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
 	if err := h.DB.DeleteDashboard(id); err != nil {
 		slog.Error("Failed to delete dashboard", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete dashboard"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete dashboard")
 		return
 	}
 
@@ -294,19 +294,19 @@ func (h *DashboardsHandler) DeleteDashboard(w http.ResponseWriter, r *http.Reque
 func (h *DashboardsHandler) CreatePanel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	dashboardID := chi.URLParam(r, "id")
 	if dashboardID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID is required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID is required")
 		return
 	}
 
 	dashboard, err := h.DB.GetDashboardByID(dashboardID)
 	if err != nil || dashboard == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
@@ -323,13 +323,13 @@ func (h *DashboardsHandler) CreatePanel(w http.ResponseWriter, r *http.Request) 
 		LayoutH      *int   `json:"layout_h"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
@@ -337,7 +337,7 @@ func (h *DashboardsHandler) CreatePanel(w http.ResponseWriter, r *http.Request) 
 
 	query := strings.TrimSpace(body.Query)
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query is required"})
+		writeError(w, http.StatusBadRequest, "Query is required")
 		return
 	}
 
@@ -366,7 +366,7 @@ func (h *DashboardsHandler) CreatePanel(w http.ResponseWriter, r *http.Request) 
 	id, err := h.DB.CreatePanel(dashboardID, name, description, panelType, query, connectionID, panelConfig, x, y, w2, h2)
 	if err != nil {
 		slog.Error("Failed to create panel", "error", err, "dashboard", dashboardID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create panel"})
+		writeError(w, http.StatusInternalServerError, "Failed to create panel")
 		return
 	}
 
@@ -389,25 +389,25 @@ func (h *DashboardsHandler) CreatePanel(w http.ResponseWriter, r *http.Request) 
 func (h *DashboardsHandler) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	dashboardID := chi.URLParam(r, "id")
 	panelID := chi.URLParam(r, "panelId")
 	if dashboardID == "" || panelID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID and panel ID are required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID and panel ID are required")
 		return
 	}
 
 	existing, err := h.DB.GetPanelByID(panelID)
 	if err != nil {
 		slog.Error("Failed to get panel for update", "error", err, "panel", panelID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get panel"})
+		writeError(w, http.StatusInternalServerError, "Failed to get panel")
 		return
 	}
 	if existing == nil || existing.DashboardID != dashboardID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Panel not found"})
+		writeError(w, http.StatusNotFound, "Panel not found")
 		return
 	}
 
@@ -424,7 +424,7 @@ func (h *DashboardsHandler) UpdatePanel(w http.ResponseWriter, r *http.Request) 
 		LayoutH      *int    `json:"layout_h"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
@@ -482,13 +482,13 @@ func (h *DashboardsHandler) UpdatePanel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !changed {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No fields to update"})
+		writeError(w, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
 	if err := h.DB.UpdatePanel(panelID, name, description, panelType, query, connectionID, panelConfig, x, y, pw, ph); err != nil {
 		slog.Error("Failed to update panel", "error", err, "panel", panelID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update panel"})
+		writeError(w, http.StatusInternalServerError, "Failed to update panel")
 		return
 	}
 
@@ -511,31 +511,31 @@ func (h *DashboardsHandler) UpdatePanel(w http.ResponseWriter, r *http.Request) 
 func (h *DashboardsHandler) DeletePanel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	dashboardID := chi.URLParam(r, "id")
 	panelID := chi.URLParam(r, "panelId")
 	if dashboardID == "" || panelID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Dashboard ID and panel ID are required"})
+		writeError(w, http.StatusBadRequest, "Dashboard ID and panel ID are required")
 		return
 	}
 
 	existing, err := h.DB.GetPanelByID(panelID)
 	if err != nil {
 		slog.Error("Failed to get panel for delete", "error", err, "panel", panelID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get panel"})
+		writeError(w, http.StatusInternalServerError, "Failed to get panel")
 		return
 	}
 	if existing == nil || existing.DashboardID != dashboardID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Panel not found"})
+		writeError(w, http.StatusNotFound, "Panel not found")
 		return
 	}
 
 	if err := h.DB.DeletePanel(panelID); err != nil {
 		slog.Error("Failed to delete panel", "error", err, "panel", panelID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete panel"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete panel")
 		return
 	}
 
@@ -554,7 +554,7 @@ func (h *DashboardsHandler) DeletePanel(w http.ResponseWriter, r *http.Request) 
 func (h *DashboardsHandler) ExecutePanelQuery(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -568,13 +568,13 @@ func (h *DashboardsHandler) ExecutePanelQuery(w http.ResponseWriter, r *http.Req
 		Table         string               `json:"table"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	query := strings.TrimSpace(body.Query)
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query is required"})
+		writeError(w, http.StatusBadRequest, "Query is required")
 		return
 	}
 
@@ -593,23 +593,20 @@ func (h *DashboardsHandler) ExecutePanelQuery(w http.ResponseWriter, r *http.Req
 	})
 
 	if len(processed.Errors) > 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false,
-			"error":   strings.Join(processed.Errors, "; "),
-		})
+		writeError(w, http.StatusBadRequest, strings.Join(processed.Errors, "; "))
 		return
 	}
 
 	query = strings.TrimSpace(processed.Query)
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Processed query is empty"})
+		writeError(w, http.StatusBadRequest, "Processed query is empty")
 		return
 	}
 
 	password, err := crypto.Decrypt(session.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to decrypt credentials"})
+		writeError(w, http.StatusInternalServerError, "Failed to decrypt credentials")
 		return
 	}
 
@@ -657,7 +654,7 @@ func (h *DashboardsHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	shares, err := h.DB.GetDashboardSharesByDashboard(dashboardID)
 	if err != nil {
 		slog.Error("Failed to list shares", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list shares"})
+		writeError(w, http.StatusInternalServerError, "Failed to list shares")
 		return
 	}
 	if shares == nil {
@@ -670,14 +667,14 @@ func (h *DashboardsHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 func (h *DashboardsHandler) CreateShare(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	dashboardID := chi.URLParam(r, "id")
 	dashboard, err := h.DB.GetDashboardByID(dashboardID)
 	if err != nil || dashboard == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
@@ -704,7 +701,7 @@ func (h *DashboardsHandler) CreateShare(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if visibility == "private" && len(cleanEmails) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Private shares require at least one email"})
+		writeError(w, http.StatusBadRequest, "Private shares require at least one email")
 		return
 	}
 
@@ -715,7 +712,7 @@ func (h *DashboardsHandler) CreateShare(w http.ResponseWriter, r *http.Request) 
 	)
 	if err != nil {
 		slog.Error("Failed to create share", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create share"})
+		writeError(w, http.StatusInternalServerError, "Failed to create share")
 		return
 	}
 
@@ -732,14 +729,14 @@ func (h *DashboardsHandler) CreateShare(w http.ResponseWriter, r *http.Request) 
 func (h *DashboardsHandler) DeleteShare(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	shareID := chi.URLParam(r, "shareId")
 	if err := h.DB.DeleteDashboardShare(shareID); err != nil {
 		slog.Error("Failed to delete share", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete share"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete share")
 		return
 	}
 
@@ -756,43 +753,43 @@ func (h *DashboardsHandler) DeleteShare(w http.ResponseWriter, r *http.Request) 
 func (h *DashboardsHandler) InviteToShare(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	shareID := chi.URLParam(r, "shareId")
 	share, err := h.DB.GetDashboardShareByID(shareID)
 	if err != nil || share == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Share not found"})
+		writeError(w, http.StatusNotFound, "Share not found")
 		return
 	}
 
 	if share.Visibility != "private" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invites are only for private shares"})
+		writeError(w, http.StatusBadRequest, "Invites are only for private shares")
 		return
 	}
 
 	if len(share.AllowedEmails) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No emails configured on this share"})
+		writeError(w, http.StatusBadRequest, "No emails configured on this share")
 		return
 	}
 
 	channel, err := h.DB.GetFirstActiveAlertChannel()
 	if err != nil || channel == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No email channel configured. Set up an SMTP, Resend, or Brevo channel in Admin > Alerts first."})
+		writeError(w, http.StatusBadRequest, "No email channel configured. Set up an SMTP, Resend, or Brevo channel in Admin > Alerts first.")
 		return
 	}
 
 	decrypted, err := crypto.Decrypt(channel.ConfigEncrypted, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt alert channel config", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read email channel config"})
+		writeError(w, http.StatusInternalServerError, "Failed to read email channel config")
 		return
 	}
 	var channelConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(decrypted), &channelConfig); err != nil {
 		slog.Error("Failed to parse alert channel config", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Invalid email channel config"})
+		writeError(w, http.StatusInternalServerError, "Invalid email channel config")
 		return
 	}
 
@@ -885,24 +882,25 @@ func (h *DashboardsHandler) GetPublicDashboard(w http.ResponseWriter, r *http.Re
 	share, err := h.DB.GetDashboardShareByToken(token)
 	if err != nil {
 		slog.Error("Failed to look up share token", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Internal error"})
+		writeError(w, http.StatusInternalServerError, "Internal error")
 		return
 	}
 	if share == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found or share link expired"})
+		writeError(w, http.StatusNotFound, "Dashboard not found or share link expired")
 		return
 	}
 
 	if share.ExpiresAt != nil {
 		exp, parseErr := time.Parse(time.RFC3339, *share.ExpiresAt)
 		if parseErr == nil && time.Now().UTC().After(exp) {
-			writeJSON(w, http.StatusGone, map[string]string{"error": "Share link has expired"})
+			writeError(w, http.StatusGone, "Share link has expired")
 			return
 		}
 	}
 
 	if !h.validateShareAccess(share, r) {
 		writeJSON(w, http.StatusForbidden, map[string]interface{}{
+			"success":    false,
 			"error":      "This dashboard requires an invite. Check your email for a magic link.",
 			"visibility": "private",
 		})
@@ -911,7 +909,7 @@ func (h *DashboardsHandler) GetPublicDashboard(w http.ResponseWriter, r *http.Re
 
 	dashboard, err := h.DB.GetDashboardByID(share.DashboardID)
 	if err != nil || dashboard == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Dashboard not found"})
+		writeError(w, http.StatusNotFound, "Dashboard not found")
 		return
 	}
 
@@ -934,20 +932,20 @@ func (h *DashboardsHandler) ExecutePublicQuery(w http.ResponseWriter, r *http.Re
 	token := chi.URLParam(r, "token")
 	share, err := h.DB.GetDashboardShareByToken(token)
 	if err != nil || share == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Share not found"})
+		writeError(w, http.StatusNotFound, "Share not found")
 		return
 	}
 
 	if share.ExpiresAt != nil {
 		exp, parseErr := time.Parse(time.RFC3339, *share.ExpiresAt)
 		if parseErr == nil && time.Now().UTC().After(exp) {
-			writeJSON(w, http.StatusGone, map[string]string{"error": "Share link has expired"})
+			writeError(w, http.StatusGone, "Share link has expired")
 			return
 		}
 	}
 
 	if !h.validateShareAccess(share, r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied"})
+		writeError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -956,13 +954,13 @@ func (h *DashboardsHandler) ExecutePublicQuery(w http.ResponseWriter, r *http.Re
 		TimeRange *queryproc.TimeRange `json:"time_range"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	query := strings.TrimSpace(body.Query)
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query is required"})
+		writeError(w, http.StatusBadRequest, "Query is required")
 		return
 	}
 
@@ -972,32 +970,26 @@ func (h *DashboardsHandler) ExecutePublicQuery(w http.ResponseWriter, r *http.Re
 		MaxDataPoints: 1000,
 	})
 	if len(processed.Errors) > 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false,
-			"error":   strings.Join(processed.Errors, "; "),
-		})
+		writeError(w, http.StatusBadRequest, strings.Join(processed.Errors, "; "))
 		return
 	}
 
 	query = strings.TrimSpace(processed.Query)
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Processed query is empty"})
+		writeError(w, http.StatusBadRequest, "Processed query is empty")
 		return
 	}
 
 	password, err := crypto.Decrypt(share.EncryptedPassword, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to decrypt share credentials", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to process query"})
+		writeError(w, http.StatusInternalServerError, "Failed to process query")
 		return
 	}
 
 	result, qErr := h.Gateway.ExecuteQuery(share.ConnectionID, query, share.ClickhouseUser, password, 30*time.Second)
 	if qErr != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
-			"success": false,
-			"error":   qErr.Error(),
-		})
+		writeError(w, http.StatusBadGateway, qErr.Error())
 		return
 	}
 

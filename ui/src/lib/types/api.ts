@@ -9,6 +9,8 @@ export interface ApiResponse<T = unknown> {
 export interface Session {
   user: string
   role: string
+  /** Explanation when the effective role is surprising (implicit admin ignored, degraded detection) */
+  roleNote?: string
   connectionId: string
   connectionName: string
   connectionOnline: boolean

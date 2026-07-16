@@ -36,29 +36,23 @@ type AlertRule struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-type AlertRuleRoute struct {
-	ID                       string   `json:"id"`
-	RuleID                   string   `json:"rule_id"`
-	ChannelID                string   `json:"channel_id"`
-	Recipients               []string `json:"recipients"`
-	RecipientsJSON           string   `json:"-"`
-	IsActive                 bool     `json:"is_active"`
-	DeliveryMode             string   `json:"delivery_mode"`
-	DigestWindowMinutes      int      `json:"digest_window_minutes"`
-	EscalationChannelID      *string  `json:"escalation_channel_id"`
-	EscalationRecipients     []string `json:"escalation_recipients"`
-	EscalationRecipientsJSON string   `json:"-"`
-	EscalationAfterFailures  int      `json:"escalation_after_failures"`
-	CreatedAt                string   `json:"created_at"`
-	UpdatedAt                string   `json:"updated_at"`
+// AlertRuleChannel binds an alert rule directly to a delivery channel with a
+// recipient list.
+type AlertRuleChannel struct {
+	ID             string   `json:"id"`
+	RuleID         string   `json:"rule_id"`
+	ChannelID      string   `json:"channel_id"`
+	Recipients     []string `json:"recipients"`
+	RecipientsJSON string   `json:"-"`
+	IsActive       bool     `json:"is_active"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
 }
 
-type AlertRuleRouteView struct {
-	AlertRuleRoute
-	ChannelName           string  `json:"channel_name"`
-	ChannelType           string  `json:"channel_type"`
-	EscalationChannelName *string `json:"escalation_channel_name"`
-	EscalationChannelType *string `json:"escalation_channel_type"`
+type AlertRuleChannelView struct {
+	AlertRuleChannel
+	ChannelName string `json:"channel_name"`
+	ChannelType string `json:"channel_type"`
 }
 
 type AlertEvent struct {
@@ -80,8 +74,8 @@ type AlertDispatchJob struct {
 	ID                string  `json:"id"`
 	EventID           string  `json:"event_id"`
 	RuleID            string  `json:"rule_id"`
-	RouteID           string  `json:"route_id"`
 	ChannelID         string  `json:"channel_id"`
+	RecipientsJSON    string  `json:"recipients_json"`
 	Status            string  `json:"status"`
 	AttemptCount      int     `json:"attempt_count"`
 	MaxAttempts       int     `json:"max_attempts"`
@@ -95,28 +89,19 @@ type AlertDispatchJob struct {
 
 type AlertDispatchJobWithDetails struct {
 	AlertDispatchJob
-	EventType                        string  `json:"event_type"`
-	EventSeverity                    string  `json:"event_severity"`
-	EventTitle                       string  `json:"event_title"`
-	EventMessage                     string  `json:"event_message"`
-	EventPayloadJSON                 *string `json:"event_payload_json"`
-	EventFingerprint                 *string `json:"event_fingerprint"`
-	RuleName                         string  `json:"rule_name"`
-	RuleCooldownSeconds              int     `json:"rule_cooldown_seconds"`
-	RuleSubjectTemplate              *string `json:"rule_subject_template"`
-	RuleBodyTemplate                 *string `json:"rule_body_template"`
-	RouteRecipientsJSON              string  `json:"route_recipients_json"`
-	RouteDeliveryMode                string  `json:"route_delivery_mode"`
-	RouteDigestWindowMins            int     `json:"route_digest_window_minutes"`
-	RouteEscalationChannelID         *string `json:"route_escalation_channel_id"`
-	RouteEscalationRecipientsJSON    *string `json:"route_escalation_recipients_json"`
-	RouteEscalationAfterFailures     int     `json:"route_escalation_after_failures"`
-	ChannelName                      string  `json:"channel_name"`
-	ChannelType                      string  `json:"channel_type"`
-	ChannelConfigEncrypted           string  `json:"channel_config_encrypted"`
-	EscalationChannelName            *string `json:"escalation_channel_name"`
-	EscalationChannelType            *string `json:"escalation_channel_type"`
-	EscalationChannelConfigEncrypted *string `json:"escalation_channel_config_encrypted"`
+	EventType              string  `json:"event_type"`
+	EventSeverity          string  `json:"event_severity"`
+	EventTitle             string  `json:"event_title"`
+	EventMessage           string  `json:"event_message"`
+	EventPayloadJSON       *string `json:"event_payload_json"`
+	EventFingerprint       *string `json:"event_fingerprint"`
+	RuleName               string  `json:"rule_name"`
+	RuleCooldownSeconds    int     `json:"rule_cooldown_seconds"`
+	RuleSubjectTemplate    *string `json:"rule_subject_template"`
+	RuleBodyTemplate       *string `json:"rule_body_template"`
+	ChannelName            string  `json:"channel_name"`
+	ChannelType            string  `json:"channel_type"`
+	ChannelConfigEncrypted string  `json:"channel_config_encrypted"`
 }
 
 func (db *DB) CreateAlertChannel(name, channelType, encryptedConfig string, isActive bool, createdBy string) (string, error) {
@@ -307,186 +292,90 @@ func (db *DB) ListEnabledAlertRules() ([]AlertRule, error) {
 	return out, nil
 }
 
-func (db *DB) ReplaceAlertRuleRoutes(ruleID string, routes []AlertRuleRoute) error {
+// ReplaceAlertRuleChannels replaces all channel bindings for a rule.
+func (db *DB) ReplaceAlertRuleChannels(ruleID string, bindings []AlertRuleChannel) error {
 	tx, err := db.conn.Begin()
 	if err != nil {
-		return fmt.Errorf("begin replace alert routes: %w", err)
+		return fmt.Errorf("begin replace alert rule channels: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM alert_rule_routes WHERE rule_id = ?`, ruleID); err != nil {
-		return fmt.Errorf("clear alert routes: %w", err)
+	if _, err := tx.Exec(`DELETE FROM alert_rule_channels WHERE rule_id = ?`, ruleID); err != nil {
+		return fmt.Errorf("clear alert rule channels: %w", err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, route := range routes {
-		recipientsJSON, err := json.Marshal(route.Recipients)
+	for _, binding := range bindings {
+		recipientsJSON, err := json.Marshal(binding.Recipients)
 		if err != nil {
-			return fmt.Errorf("marshal route recipients: %w", err)
+			return fmt.Errorf("marshal binding recipients: %w", err)
 		}
-		id := route.ID
+		id := binding.ID
 		if strings.TrimSpace(id) == "" {
 			id = uuid.NewString()
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO alert_rule_routes (id, rule_id, channel_id, recipients_json, is_active, created_at, updated_at)
+			`INSERT INTO alert_rule_channels (id, rule_id, channel_id, recipients_json, is_active, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			id, ruleID, route.ChannelID, string(recipientsJSON), boolToInt(route.IsActive), now, now,
+			id, ruleID, binding.ChannelID, string(recipientsJSON), boolToInt(binding.IsActive), now, now,
 		); err != nil {
-			return fmt.Errorf("insert alert route: %w", err)
-		}
-
-		deliveryMode := strings.ToLower(strings.TrimSpace(route.DeliveryMode))
-		if deliveryMode != "digest" {
-			deliveryMode = "immediate"
-		}
-		digestWindow := route.DigestWindowMinutes
-		if digestWindow < 0 {
-			digestWindow = 0
-		}
-		escalationAfter := route.EscalationAfterFailures
-		if escalationAfter < 0 {
-			escalationAfter = 0
-		}
-		var escalationChannelID interface{}
-		if route.EscalationChannelID != nil && strings.TrimSpace(*route.EscalationChannelID) != "" {
-			escalationChannelID = strings.TrimSpace(*route.EscalationChannelID)
-		}
-		var escalationRecipients interface{}
-		if len(route.EscalationRecipients) > 0 {
-			payload, err := json.Marshal(route.EscalationRecipients)
-			if err != nil {
-				return fmt.Errorf("marshal escalation recipients: %w", err)
-			}
-			escalationRecipients = string(payload)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO alert_route_policies
-			 (route_id, delivery_mode, digest_window_minutes, escalation_channel_id, escalation_recipients_json, escalation_after_failures, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(route_id) DO UPDATE SET
-			   delivery_mode = excluded.delivery_mode,
-			   digest_window_minutes = excluded.digest_window_minutes,
-			   escalation_channel_id = excluded.escalation_channel_id,
-			   escalation_recipients_json = excluded.escalation_recipients_json,
-			   escalation_after_failures = excluded.escalation_after_failures,
-			   updated_at = excluded.updated_at`,
-			id, deliveryMode, digestWindow, escalationChannelID, escalationRecipients, escalationAfter, now, now,
-		); err != nil {
-			return fmt.Errorf("upsert alert route policy: %w", err)
+			return fmt.Errorf("insert alert rule channel: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit replace alert routes: %w", err)
+		return fmt.Errorf("commit replace alert rule channels: %w", err)
 	}
 	return nil
 }
 
-func (db *DB) ListAlertRuleRoutes(ruleID string) ([]AlertRuleRouteView, error) {
-	rows, err := db.conn.Query(
-		`SELECT rr.id, rr.rule_id, rr.channel_id, rr.recipients_json, rr.is_active, rr.created_at, rr.updated_at, c.name, c.channel_type,
-		        COALESCE(rp.delivery_mode, 'immediate'),
-				COALESCE(rp.digest_window_minutes, 0),
-				rp.escalation_channel_id,
-				rp.escalation_recipients_json,
-				COALESCE(rp.escalation_after_failures, 0),
-				ec.name,
-				ec.channel_type
-		 FROM alert_rule_routes rr
-		 JOIN alert_channels c ON c.id = rr.channel_id
-		 LEFT JOIN alert_route_policies rp ON rp.route_id = rr.id
-		 LEFT JOIN alert_channels ec ON ec.id = rp.escalation_channel_id
-		 WHERE rr.rule_id = ?
-		 ORDER BY rr.created_at ASC`,
-		ruleID,
-	)
+func (db *DB) listAlertRuleChannels(ruleID string, activeOnly bool) ([]AlertRuleChannelView, error) {
+	query := `SELECT rc.id, rc.rule_id, rc.channel_id, rc.recipients_json, rc.is_active, rc.created_at, rc.updated_at, c.name, c.channel_type
+		 FROM alert_rule_channels rc
+		 JOIN alert_channels c ON c.id = rc.channel_id
+		 WHERE rc.rule_id = ?`
+	if activeOnly {
+		query += ` AND rc.is_active = 1 AND c.is_active = 1`
+	}
+	query += ` ORDER BY rc.created_at ASC`
+
+	rows, err := db.conn.Query(query, ruleID)
 	if err != nil {
-		return nil, fmt.Errorf("list alert rule routes: %w", err)
+		return nil, fmt.Errorf("list alert rule channels: %w", err)
 	}
 	defer rows.Close()
 
-	out := make([]AlertRuleRouteView, 0)
+	out := make([]AlertRuleChannelView, 0)
 	for rows.Next() {
-		var item AlertRuleRouteView
+		var item AlertRuleChannelView
 		var recipientsJSON string
 		var active int
-		var escalationChannelID, escalationRecipientsJSON, escalationChannelName, escalationChannelType sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.RuleID, &item.ChannelID, &recipientsJSON, &active, &item.CreatedAt, &item.UpdatedAt,
 			&item.ChannelName, &item.ChannelType,
-			&item.DeliveryMode, &item.DigestWindowMinutes, &escalationChannelID, &escalationRecipientsJSON, &item.EscalationAfterFailures,
-			&escalationChannelName, &escalationChannelType,
 		); err != nil {
-			return nil, fmt.Errorf("scan alert rule route: %w", err)
+			return nil, fmt.Errorf("scan alert rule channel: %w", err)
 		}
 		item.IsActive = intToBool(active)
 		item.RecipientsJSON = recipientsJSON
 		item.Recipients = parseRecipientsJSON(recipientsJSON)
-		item.EscalationChannelID = nullStringToPtr(escalationChannelID)
-		item.EscalationRecipientsJSON = escalationRecipientsJSON.String
-		item.EscalationRecipients = parseRecipientsJSON(escalationRecipientsJSON.String)
-		item.EscalationChannelName = nullStringToPtr(escalationChannelName)
-		item.EscalationChannelType = nullStringToPtr(escalationChannelType)
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate alert rule routes: %w", err)
+		return nil, fmt.Errorf("iterate alert rule channels: %w", err)
 	}
 	return out, nil
 }
 
-func (db *DB) ListActiveAlertRuleRoutes(ruleID string) ([]AlertRuleRouteView, error) {
-	rows, err := db.conn.Query(
-		`SELECT rr.id, rr.rule_id, rr.channel_id, rr.recipients_json, rr.is_active, rr.created_at, rr.updated_at, c.name, c.channel_type,
-		        COALESCE(rp.delivery_mode, 'immediate'),
-				COALESCE(rp.digest_window_minutes, 0),
-				rp.escalation_channel_id,
-				rp.escalation_recipients_json,
-				COALESCE(rp.escalation_after_failures, 0),
-				ec.name,
-				ec.channel_type
-		 FROM alert_rule_routes rr
-		 JOIN alert_channels c ON c.id = rr.channel_id
-		 LEFT JOIN alert_route_policies rp ON rp.route_id = rr.id
-		 LEFT JOIN alert_channels ec ON ec.id = rp.escalation_channel_id
-		 WHERE rr.rule_id = ? AND rr.is_active = 1 AND c.is_active = 1
-		 ORDER BY rr.created_at ASC`,
-		ruleID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list active alert rule routes: %w", err)
-	}
-	defer rows.Close()
+// ListAlertRuleChannels returns all channel bindings for a rule.
+func (db *DB) ListAlertRuleChannels(ruleID string) ([]AlertRuleChannelView, error) {
+	return db.listAlertRuleChannels(ruleID, false)
+}
 
-	out := make([]AlertRuleRouteView, 0)
-	for rows.Next() {
-		var item AlertRuleRouteView
-		var recipientsJSON string
-		var active int
-		var escalationChannelID, escalationRecipientsJSON, escalationChannelName, escalationChannelType sql.NullString
-		if err := rows.Scan(
-			&item.ID, &item.RuleID, &item.ChannelID, &recipientsJSON, &active, &item.CreatedAt, &item.UpdatedAt,
-			&item.ChannelName, &item.ChannelType,
-			&item.DeliveryMode, &item.DigestWindowMinutes, &escalationChannelID, &escalationRecipientsJSON, &item.EscalationAfterFailures,
-			&escalationChannelName, &escalationChannelType,
-		); err != nil {
-			return nil, fmt.Errorf("scan active alert route: %w", err)
-		}
-		item.IsActive = intToBool(active)
-		item.RecipientsJSON = recipientsJSON
-		item.Recipients = parseRecipientsJSON(recipientsJSON)
-		item.EscalationChannelID = nullStringToPtr(escalationChannelID)
-		item.EscalationRecipientsJSON = escalationRecipientsJSON.String
-		item.EscalationRecipients = parseRecipientsJSON(escalationRecipientsJSON.String)
-		item.EscalationChannelName = nullStringToPtr(escalationChannelName)
-		item.EscalationChannelType = nullStringToPtr(escalationChannelType)
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate active alert routes: %w", err)
-	}
-	return out, nil
+// ListActiveAlertRuleChannels returns the active bindings of a rule whose
+// channel is also active.
+func (db *DB) ListActiveAlertRuleChannels(ruleID string) ([]AlertRuleChannelView, error) {
+	return db.listAlertRuleChannels(ruleID, true)
 }
 
 func (db *DB) CreateAlertEvent(connectionID *string, eventType, severity, title, message string, payload interface{}, fingerprint, sourceRef string) (string, error) {
@@ -627,7 +516,10 @@ func (db *DB) MarkAlertEventProcessed(id string) error {
 	return nil
 }
 
-func (db *DB) HasRecentAlertDispatch(routeID, fingerprint string, since time.Time) (bool, error) {
+// HasRecentAlertDispatch reports whether a job for the same rule/channel pair
+// and event fingerprint was queued or sent since the given time (cooldown
+// deduplication).
+func (db *DB) HasRecentAlertDispatch(ruleID, channelID, fingerprint string, since time.Time) (bool, error) {
 	if strings.TrimSpace(fingerprint) == "" {
 		return false, nil
 	}
@@ -636,27 +528,34 @@ func (db *DB) HasRecentAlertDispatch(routeID, fingerprint string, since time.Tim
 		`SELECT COUNT(*)
 		 FROM alert_dispatch_jobs j
 		 JOIN alert_events e ON e.id = j.event_id
-		 WHERE j.route_id = ?
+		 WHERE j.rule_id = ?
+		   AND j.channel_id = ?
 		   AND e.fingerprint = ?
 		   AND e.created_at >= ?
 		   AND j.status IN ('queued', 'retrying', 'sending', 'sent')`,
-		routeID, fingerprint, since.UTC().Format(time.RFC3339),
+		ruleID, channelID, fingerprint, since.UTC().Format(time.RFC3339),
 	).Scan(&count); err != nil {
 		return false, fmt.Errorf("check recent alert dispatch: %w", err)
 	}
 	return count > 0, nil
 }
 
-func (db *DB) CreateAlertDispatchJob(eventID, ruleID, routeID, channelID string, maxAttempts int, nextAttemptAt time.Time) (string, error) {
+// CreateAlertDispatchJob queues a delivery for an event via a rule's channel.
+// The recipients are snapshotted onto the job so later binding edits do not
+// affect already-queued deliveries.
+func (db *DB) CreateAlertDispatchJob(eventID, ruleID, channelID, recipientsJSON string, maxAttempts int, nextAttemptAt time.Time) (string, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if maxAttempts <= 0 {
 		maxAttempts = 5
 	}
+	if strings.TrimSpace(recipientsJSON) == "" {
+		recipientsJSON = "[]"
+	}
 	if _, err := db.conn.Exec(
-		`INSERT INTO alert_dispatch_jobs (id, event_id, rule_id, route_id, channel_id, status, attempt_count, max_attempts, next_attempt_at, created_at, updated_at)
+		`INSERT INTO alert_dispatch_jobs (id, event_id, rule_id, channel_id, recipients_json, status, attempt_count, max_attempts, next_attempt_at, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
-		id, eventID, ruleID, routeID, channelID, maxAttempts, nextAttemptAt.UTC().Format(time.RFC3339), now, now,
+		id, eventID, ruleID, channelID, recipientsJSON, maxAttempts, nextAttemptAt.UTC().Format(time.RFC3339), now, now,
 	); err != nil {
 		return "", fmt.Errorf("create alert dispatch job: %w", err)
 	}
@@ -670,24 +569,14 @@ func (db *DB) ListDueAlertDispatchJobs(limit int) ([]AlertDispatchJobWithDetails
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := db.conn.Query(
 		`SELECT
-			j.id, j.event_id, j.rule_id, j.route_id, j.channel_id, j.status, j.attempt_count, j.max_attempts, j.next_attempt_at, j.last_error, j.provider_message_id, j.created_at, j.updated_at, j.sent_at,
+			j.id, j.event_id, j.rule_id, j.channel_id, j.recipients_json, j.status, j.attempt_count, j.max_attempts, j.next_attempt_at, j.last_error, j.provider_message_id, j.created_at, j.updated_at, j.sent_at,
 			e.event_type, e.severity, e.title, e.message, e.payload_json, e.fingerprint,
 			r.name, r.cooldown_seconds, r.subject_template, r.body_template,
-			rr.recipients_json,
-			COALESCE(rp.delivery_mode, 'immediate'),
-			COALESCE(rp.digest_window_minutes, 0),
-			rp.escalation_channel_id,
-			rp.escalation_recipients_json,
-			COALESCE(rp.escalation_after_failures, 0),
-			c.name, c.channel_type, c.config_encrypted,
-			ec.name, ec.channel_type, ec.config_encrypted
+			c.name, c.channel_type, c.config_encrypted
 		 FROM alert_dispatch_jobs j
 		 JOIN alert_events e ON e.id = j.event_id
 		 JOIN alert_rules r ON r.id = j.rule_id
-		 JOIN alert_rule_routes rr ON rr.id = j.route_id
-		 LEFT JOIN alert_route_policies rp ON rp.route_id = rr.id
 		 JOIN alert_channels c ON c.id = j.channel_id
-		 LEFT JOIN alert_channels ec ON ec.id = rp.escalation_channel_id
 		 WHERE j.status IN ('queued', 'retrying')
 		   AND j.attempt_count < j.max_attempts
 		   AND j.next_attempt_at <= ?
@@ -705,15 +594,11 @@ func (db *DB) ListDueAlertDispatchJobs(limit int) ([]AlertDispatchJobWithDetails
 		var item AlertDispatchJobWithDetails
 		var lastError, providerMessageID, sentAt sql.NullString
 		var eventPayloadJSON, eventFingerprint, subjectTemplate, bodyTemplate sql.NullString
-		var escalationChannelID, escalationRecipientsJSON, escalationChannelName, escalationChannelType, escalationChannelConfig sql.NullString
 		if err := rows.Scan(
-			&item.ID, &item.EventID, &item.RuleID, &item.RouteID, &item.ChannelID, &item.Status, &item.AttemptCount, &item.MaxAttempts, &item.NextAttemptAt, &lastError, &providerMessageID, &item.CreatedAt, &item.UpdatedAt, &sentAt,
+			&item.ID, &item.EventID, &item.RuleID, &item.ChannelID, &item.RecipientsJSON, &item.Status, &item.AttemptCount, &item.MaxAttempts, &item.NextAttemptAt, &lastError, &providerMessageID, &item.CreatedAt, &item.UpdatedAt, &sentAt,
 			&item.EventType, &item.EventSeverity, &item.EventTitle, &item.EventMessage, &eventPayloadJSON, &eventFingerprint,
 			&item.RuleName, &item.RuleCooldownSeconds, &subjectTemplate, &bodyTemplate,
-			&item.RouteRecipientsJSON,
-			&item.RouteDeliveryMode, &item.RouteDigestWindowMins, &escalationChannelID, &escalationRecipientsJSON, &item.RouteEscalationAfterFailures,
 			&item.ChannelName, &item.ChannelType, &item.ChannelConfigEncrypted,
-			&escalationChannelName, &escalationChannelType, &escalationChannelConfig,
 		); err != nil {
 			return nil, fmt.Errorf("scan due alert dispatch job: %w", err)
 		}
@@ -724,11 +609,6 @@ func (db *DB) ListDueAlertDispatchJobs(limit int) ([]AlertDispatchJobWithDetails
 		item.EventFingerprint = nullStringToPtr(eventFingerprint)
 		item.RuleSubjectTemplate = nullStringToPtr(subjectTemplate)
 		item.RuleBodyTemplate = nullStringToPtr(bodyTemplate)
-		item.RouteEscalationChannelID = nullStringToPtr(escalationChannelID)
-		item.RouteEscalationRecipientsJSON = nullStringToPtr(escalationRecipientsJSON)
-		item.EscalationChannelName = nullStringToPtr(escalationChannelName)
-		item.EscalationChannelType = nullStringToPtr(escalationChannelType)
-		item.EscalationChannelConfigEncrypted = nullStringToPtr(escalationChannelConfig)
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

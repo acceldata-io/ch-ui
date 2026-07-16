@@ -30,25 +30,25 @@ func (h *LicenseHandler) ActivateLicense(w http.ResponseWriter, r *http.Request)
 		License string `json:"license"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	licenseJSON := strings.TrimSpace(body.License)
 	if licenseJSON == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "License JSON is required"})
+		writeError(w, http.StatusBadRequest, "License JSON is required")
 		return
 	}
 
 	info := license.ValidateLicense(licenseJSON)
 	if !info.Valid {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid or expired license"})
+		writeError(w, http.StatusBadRequest, "Invalid or expired license")
 		return
 	}
 
 	// Store in settings
 	if err := h.DB.SetSetting("license_json", licenseJSON); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save license"})
+		writeError(w, http.StatusInternalServerError, "Failed to save license")
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *LicenseHandler) ActivateLicense(w http.ResponseWriter, r *http.Request)
 // POST /api/license/deactivate
 func (h *LicenseHandler) DeactivateLicense(w http.ResponseWriter, r *http.Request) {
 	if err := h.DB.DeleteSetting("license_json"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to remove license"})
+		writeError(w, http.StatusInternalServerError, "Failed to remove license")
 		return
 	}
 

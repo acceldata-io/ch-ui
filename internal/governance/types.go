@@ -46,16 +46,6 @@ const (
 	ChangeColumnTypeChanged SchemaChangeType = "column_type_changed"
 )
 
-// ── Edge types ───────────────────────────────────────────────────────────────
-
-type EdgeType string
-
-const (
-	EdgeSelectFrom     EdgeType = "select_from"
-	EdgeInsertSelect   EdgeType = "insert_select"
-	EdgeCreateAsSelect EdgeType = "create_as_select"
-)
-
 // ── Model structs ────────────────────────────────────────────────────────────
 
 type SyncState struct {
@@ -147,28 +137,6 @@ type QueryLogEntry struct {
 	IsError        bool    `json:"is_error"`
 	ErrorMessage   *string `json:"error_message"`
 	CreatedAt      string  `json:"created_at"`
-}
-
-type LineageEdge struct {
-	ID             string              `json:"id"`
-	ConnectionID   string              `json:"connection_id"`
-	SourceDatabase string              `json:"source_database"`
-	SourceTable    string              `json:"source_table"`
-	TargetDatabase string              `json:"target_database"`
-	TargetTable    string              `json:"target_table"`
-	QueryID        string              `json:"query_id"`
-	User           string              `json:"ch_user"`
-	EdgeType       string              `json:"edge_type"`
-	DetectedAt     string              `json:"detected_at"`
-	ColumnEdges    []ColumnLineageEdge `json:"column_edges,omitempty"`
-}
-
-type ColumnLineageEdge struct {
-	ID            string `json:"id"`
-	LineageEdgeID string `json:"lineage_edge_id"`
-	ConnectionID  string `json:"connection_id"`
-	SourceColumn  string `json:"source_column"`
-	TargetColumn  string `json:"target_column"`
 }
 
 type TagEntry struct {
@@ -326,7 +294,6 @@ type GovernanceOverview struct {
 	UserCount         int               `json:"user_count"`
 	RoleCount         int               `json:"role_count"`
 	QueryCount24h     int               `json:"query_count_24h"`
-	LineageEdgeCount  int               `json:"lineage_edge_count"`
 	PolicyCount       int               `json:"policy_count"`
 	ViolationCount    int               `json:"violation_count"`
 	IncidentCount     int               `json:"incident_count"`
@@ -366,10 +333,9 @@ type MetadataSyncResult struct {
 }
 
 type QueryLogSyncResult struct {
-	QueriesIngested   int    `json:"queries_ingested"`
-	LineageEdgesFound int    `json:"lineage_edges_found"`
-	ViolationsFound   int    `json:"violations_found"`
-	NewWatermark      string `json:"new_watermark"`
+	QueriesIngested int    `json:"queries_ingested"`
+	ViolationsFound int    `json:"violations_found"`
+	NewWatermark    string `json:"new_watermark"`
 }
 
 type AccessSyncResult struct {
@@ -386,21 +352,6 @@ type CHCredentials struct {
 	ConnectionID string
 	User         string
 	Password     string
-}
-
-// ── Lineage graph (for API response) ─────────────────────────────────────────
-
-type LineageNode struct {
-	ID       string      `json:"id"`
-	Database string      `json:"database"`
-	Table    string      `json:"table"`
-	Type     string      `json:"type"` // "source", "target", "current"
-	Columns  []GovColumn `json:"columns,omitempty"`
-}
-
-type LineageGraph struct {
-	Nodes []LineageNode `json:"nodes"`
-	Edges []LineageEdge `json:"edges"`
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

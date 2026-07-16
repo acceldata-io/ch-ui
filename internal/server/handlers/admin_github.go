@@ -162,12 +162,12 @@ func (h *AdminHandler) TestGitHubConnection(w http.ResponseWriter, r *http.Reque
 	client := ghclient.NewClient(pat)
 
 	if err := client.ValidateAccess(parts[0], parts[1]); err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": err.Error()})
+		writeError(w, http.StatusOK, err.Error())
 		return
 	}
 
 	if _, err := client.GetBranchSHA(parts[0], parts[1], branch); err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Branch %q not found", branch)})
+		writeError(w, http.StatusOK, fmt.Sprintf("Branch %q not found", branch))
 		return
 	}
 

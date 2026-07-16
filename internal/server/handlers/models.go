@@ -61,13 +61,13 @@ func (h *ModelsHandler) Routes() chi.Router {
 func (h *ModelsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	modelList, err := h.DB.GetModelsByConnection(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list models"})
+		writeError(w, http.StatusInternalServerError, "Failed to list models")
 		return
 	}
 	if modelList == nil {
@@ -81,7 +81,7 @@ func (h *ModelsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -96,12 +96,12 @@ func (h *ModelsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if err := models.ValidateModelName(body.Name); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *ModelsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 		body.Materialization = "view"
 	}
 	if body.Materialization != "view" && body.Materialization != "table" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "materialization must be 'view' or 'table'"})
+		writeError(w, http.StatusBadRequest, "materialization must be 'view' or 'table'")
 		return
 	}
 	if body.Materialization == "table" {
@@ -130,7 +130,7 @@ func (h *ModelsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 		body.TableEngine, body.OrderBy, session.ClickhouseUser,
 	)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to create model: %v", err)})
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create model: %v", err))
 		return
 	}
 
@@ -143,11 +143,11 @@ func (h *ModelsHandler) GetModel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	model, err := h.DB.GetModelByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get model"})
+		writeError(w, http.StatusInternalServerError, "Failed to get model")
 		return
 	}
 	if model == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Model not found"})
+		writeError(w, http.StatusNotFound, "Model not found")
 		return
 	}
 
@@ -160,11 +160,11 @@ func (h *ModelsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := h.DB.GetModelByID(id)
 	if err != nil || existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Model not found"})
+		writeError(w, http.StatusNotFound, "Model not found")
 		return
 	}
 	if existing.Source == "github" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "This model is managed by GitHub — edit it in your repository and re-sync"})
+		writeError(w, http.StatusForbidden, "This model is managed by GitHub — edit it in your repository and re-sync")
 		return
 	}
 
@@ -179,13 +179,13 @@ func (h *ModelsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if body.Name != "" {
 		if err := models.ValidateModelName(body.Name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	} else {
@@ -199,7 +199,7 @@ func (h *ModelsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 		body.Materialization = existing.Materialization
 	}
 	if body.Materialization != "view" && body.Materialization != "table" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "materialization must be 'view' or 'table'"})
+		writeError(w, http.StatusBadRequest, "materialization must be 'view' or 'table'")
 		return
 	}
 	if body.TableEngine == "" {
@@ -214,7 +214,7 @@ func (h *ModelsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.DB.UpdateModel(id, body.Name, body.Description, body.TargetDatabase,
 		body.Materialization, body.SQLBody, body.TableEngine, body.OrderBy); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to update model: %v", err)})
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update model: %v", err))
 		return
 	}
 
@@ -227,11 +227,11 @@ func (h *ModelsHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	existing, _ := h.DB.GetModelByID(id)
 	if existing != nil && existing.Source == "github" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "This model is managed by GitHub — remove it from your repository and re-sync"})
+		writeError(w, http.StatusForbidden, "This model is managed by GitHub — remove it from your repository and re-sync")
 		return
 	}
 	if err := h.DB.DeleteModel(id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete model"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete model")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -241,13 +241,13 @@ func (h *ModelsHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) GetDAG(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	allModels, err := h.DB.GetModelsByConnection(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load models"})
+		writeError(w, http.StatusInternalServerError, "Failed to load models")
 		return
 	}
 
@@ -352,13 +352,13 @@ func (h *ModelsHandler) GetDAG(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) ValidateAll(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	errors, err := h.Runner.Validate(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Validation failed: %v", err)})
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Validation failed: %v", err))
 		return
 	}
 
@@ -372,13 +372,13 @@ func (h *ModelsHandler) ValidateAll(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) RunAll(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	runID, err := h.Runner.RunAll(session.ConnectionID, session.ClickhouseUser)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -389,14 +389,14 @@ func (h *ModelsHandler) RunAll(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) RunSingle(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	runID, err := h.Runner.RunSingle(session.ConnectionID, id, session.ClickhouseUser)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -407,7 +407,7 @@ func (h *ModelsHandler) RunSingle(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -419,7 +419,7 @@ func (h *ModelsHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 
 	runs, err := h.DB.GetModelRuns(session.ConnectionID, limit, offset)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list runs"})
+		writeError(w, http.StatusInternalServerError, "Failed to list runs")
 		return
 	}
 	if runs == nil {
@@ -435,13 +435,13 @@ func (h *ModelsHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.DB.GetModelRunByID(runID)
 	if err != nil || run == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Run not found"})
+		writeError(w, http.StatusNotFound, "Run not found")
 		return
 	}
 
 	results, err := h.DB.GetModelRunResults(runID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load run results"})
+		writeError(w, http.StatusInternalServerError, "Failed to load run results")
 		return
 	}
 	if results == nil {
@@ -460,13 +460,13 @@ func (h *ModelsHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	allModels, err := h.DB.GetModelsByConnection(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load models"})
+		writeError(w, http.StatusInternalServerError, "Failed to load models")
 		return
 	}
 
@@ -487,7 +487,7 @@ func (h *ModelsHandler) ListPipelines(w http.ResponseWriter, r *http.Request) {
 
 	dag, dagErr := models.BuildDAG(modelIDs, refsByID, nameToID)
 	if dagErr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("DAG error: %v", dagErr)})
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("DAG error: %v", dagErr))
 		return
 	}
 
@@ -496,7 +496,7 @@ func (h *ModelsHandler) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	// Load all schedules for this connection
 	schedules, err := h.DB.GetModelSchedulesByConnection(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load schedules"})
+		writeError(w, http.StatusInternalServerError, "Failed to load schedules")
 		return
 	}
 	schedByAnchor := make(map[string]database.ModelSchedule)
@@ -543,14 +543,14 @@ func (h *ModelsHandler) ListPipelines(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) RunPipeline(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	anchorID := chi.URLParam(r, "anchorId")
 	runID, err := h.Runner.RunPipeline(session.ConnectionID, anchorID, session.ClickhouseUser)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -563,13 +563,13 @@ func (h *ModelsHandler) RunPipeline(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	schedules, err := h.DB.GetModelSchedulesByConnection(session.ConnectionID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to list schedules"})
+		writeError(w, http.StatusInternalServerError, "Failed to list schedules")
 		return
 	}
 	if schedules == nil {
@@ -583,14 +583,14 @@ func (h *ModelsHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	anchorID := chi.URLParam(r, "anchorId")
 	sched, err := h.DB.GetModelScheduleByAnchor(session.ConnectionID, anchorID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to get schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to get schedule")
 		return
 	}
 
@@ -601,7 +601,7 @@ func (h *ModelsHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) UpsertSchedule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -612,16 +612,16 @@ func (h *ModelsHandler) UpsertSchedule(w http.ResponseWriter, r *http.Request) {
 		Enabled bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if body.Cron == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cron expression is required"})
+		writeError(w, http.StatusBadRequest, "cron expression is required")
 		return
 	}
 	if !scheduler.ValidateCron(body.Cron) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron expression"})
+		writeError(w, http.StatusBadRequest, "invalid cron expression")
 		return
 	}
 
@@ -632,7 +632,7 @@ func (h *ModelsHandler) UpsertSchedule(w http.ResponseWriter, r *http.Request) {
 
 	_, err := h.DB.UpsertModelSchedule(session.ConnectionID, anchorID, body.Cron, nextRunAt, session.ClickhouseUser)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to save schedule: %v", err)})
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save schedule: %v", err))
 		return
 	}
 
@@ -644,13 +644,13 @@ func (h *ModelsHandler) UpsertSchedule(w http.ResponseWriter, r *http.Request) {
 func (h *ModelsHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	anchorID := chi.URLParam(r, "anchorId")
 	if err := h.DB.DeleteModelScheduleByAnchor(session.ConnectionID, anchorID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete schedule"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete schedule")
 		return
 	}
 

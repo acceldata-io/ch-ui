@@ -98,7 +98,6 @@ func (d *Dispatcher) tick() {
 	}
 	d.materializeEventJobs()
 	d.processDueJobs()
-	d.processDueDigests()
 }
 
 func (d *Dispatcher) materializeEventJobs() {
@@ -117,44 +116,37 @@ func (d *Dispatcher) materializeEventJobs() {
 		return
 	}
 
-	routesByRule := make(map[string][]database.AlertRuleRouteView)
+	channelsByRule := make(map[string][]database.AlertRuleChannelView)
 	now := time.Now().UTC()
 	for _, event := range events {
 		for _, rule := range rules {
 			if !ruleMatchesEvent(rule, event) {
 				continue
 			}
-			routes, ok := routesByRule[rule.ID]
+			bindings, ok := channelsByRule[rule.ID]
 			if !ok {
-				routes, err = d.db.ListActiveAlertRuleRoutes(rule.ID)
+				bindings, err = d.db.ListActiveAlertRuleChannels(rule.ID)
 				if err != nil {
-					slog.Error("Alert dispatcher failed to list active routes", "rule", rule.ID, "error", err)
+					slog.Error("Alert dispatcher failed to list active rule channels", "rule", rule.ID, "error", err)
 					continue
 				}
-				routesByRule[rule.ID] = routes
+				channelsByRule[rule.ID] = bindings
 			}
-			for _, route := range routes {
-				if len(route.Recipients) == 0 {
-					continue
-				}
-				deliveryMode := strings.ToLower(strings.TrimSpace(route.DeliveryMode))
-				if deliveryMode == "digest" {
-					if err := d.db.UpsertAlertRouteDigest(rule, route, event, now); err != nil {
-						slog.Error("Alert dispatcher failed to upsert digest batch", "event", event.ID, "rule", rule.ID, "route", route.ID, "error", err)
-					}
+			for _, binding := range bindings {
+				if len(binding.Recipients) == 0 {
 					continue
 				}
 				if event.Fingerprint != nil && strings.TrimSpace(*event.Fingerprint) != "" && rule.CooldownSeconds > 0 {
 					since := now.Add(-time.Duration(rule.CooldownSeconds) * time.Second)
-					exists, err := d.db.HasRecentAlertDispatch(route.ID, *event.Fingerprint, since)
+					exists, err := d.db.HasRecentAlertDispatch(rule.ID, binding.ChannelID, *event.Fingerprint, since)
 					if err != nil {
-						slog.Warn("Alert dispatcher dedupe check failed", "route", route.ID, "error", err)
+						slog.Warn("Alert dispatcher dedupe check failed", "rule", rule.ID, "channel", binding.ChannelID, "error", err)
 					} else if exists {
 						continue
 					}
 				}
-				if _, err := d.db.CreateAlertDispatchJob(event.ID, rule.ID, route.ID, route.ChannelID, rule.MaxAttempts, now); err != nil {
-					slog.Error("Alert dispatcher failed to create dispatch job", "event", event.ID, "rule", rule.ID, "route", route.ID, "error", err)
+				if _, err := d.db.CreateAlertDispatchJob(event.ID, rule.ID, binding.ChannelID, binding.RecipientsJSON, rule.MaxAttempts, now); err != nil {
+					slog.Error("Alert dispatcher failed to create dispatch job", "event", event.ID, "rule", rule.ID, "channel", binding.ChannelID, "error", err)
 				}
 			}
 		}
@@ -181,9 +173,9 @@ func (d *Dispatcher) processDueJobs() {
 			continue
 		}
 
-		recipients := parseRecipients(job.RouteRecipientsJSON)
+		recipients := parseRecipients(job.RecipientsJSON)
 		if len(recipients) == 0 {
-			_ = d.db.MarkAlertDispatchJobFailed(job.ID, "route has no recipients")
+			_ = d.db.MarkAlertDispatchJobFailed(job.ID, "job has no recipients")
 			continue
 		}
 
@@ -210,11 +202,7 @@ func (d *Dispatcher) processDueJobs() {
 		if err != nil {
 			nextAttempt := job.AttemptCount + 1
 			if nextAttempt >= job.MaxAttempts {
-				failureMessage := err.Error()
-				if escalationNote := d.tryEscalationForDispatchJob(job, subject, body, failureMessage, nextAttempt); escalationNote != "" {
-					failureMessage = failureMessage + " | " + escalationNote
-				}
-				_ = d.db.MarkAlertDispatchJobFailed(job.ID, failureMessage)
+				_ = d.db.MarkAlertDispatchJobFailed(job.ID, err.Error())
 				continue
 			}
 			backoff := retryBackoff(nextAttempt)
@@ -224,64 +212,6 @@ func (d *Dispatcher) processDueJobs() {
 
 		if err := d.db.MarkAlertDispatchJobSent(job.ID, providerMessageID); err != nil {
 			slog.Warn("Alert dispatcher failed to mark job sent", "job", job.ID, "error", err)
-		}
-	}
-}
-
-func (d *Dispatcher) processDueDigests() {
-	digests, err := d.db.ListDueAlertRouteDigests(maxJobsPerTick)
-	if err != nil {
-		slog.Error("Alert dispatcher failed to list due digests", "error", err)
-		return
-	}
-	if len(digests) == 0 {
-		return
-	}
-
-	for _, digest := range digests {
-		if err := d.db.MarkAlertRouteDigestSending(digest.ID); err != nil {
-			slog.Warn("Alert dispatcher failed to mark digest sending", "digest", digest.ID, "error", err)
-			continue
-		}
-
-		recipients := parseRecipients(digest.RouteRecipientsJSON)
-		if len(recipients) == 0 {
-			_ = d.db.MarkAlertRouteDigestFailed(digest.ID, "digest route has no recipients")
-			continue
-		}
-
-		decrypted, err := crypto.Decrypt(digest.ChannelConfigEncrypted, d.cfg.AppSecretKey)
-		if err != nil {
-			_ = d.db.MarkAlertRouteDigestFailed(digest.ID, "decrypt channel config: "+err.Error())
-			continue
-		}
-		var channelConfig map[string]interface{}
-		if err := json.Unmarshal([]byte(decrypted), &channelConfig); err != nil {
-			_ = d.db.MarkAlertRouteDigestFailed(digest.ID, "parse channel config: "+err.Error())
-			continue
-		}
-
-		subject := fmt.Sprintf("[CH-UI Digest][%s][%s] %d events", strings.ToUpper(digest.Severity), digest.EventType, digest.EventCount)
-		body := renderDigestBody(digest)
-
-		_, err = d.sendByChannelType(context.Background(), digest.ChannelType, channelConfig, recipients, subject, body)
-		if err != nil {
-			nextAttempt := digest.AttemptCount + 1
-			if nextAttempt >= digest.MaxAttempts {
-				failureMessage := err.Error()
-				if escalationNote := d.tryEscalationForDigest(digest, subject, body, failureMessage, nextAttempt); escalationNote != "" {
-					failureMessage = failureMessage + " | " + escalationNote
-				}
-				_ = d.db.MarkAlertRouteDigestFailed(digest.ID, failureMessage)
-				continue
-			}
-			backoff := retryBackoff(nextAttempt)
-			_ = d.db.MarkAlertRouteDigestRetry(digest.ID, time.Now().UTC().Add(backoff), err.Error())
-			continue
-		}
-
-		if err := d.db.MarkAlertRouteDigestSent(digest.ID); err != nil {
-			slog.Warn("Alert dispatcher failed to mark digest sent", "digest", digest.ID, "error", err)
 		}
 	}
 }
@@ -349,24 +279,6 @@ func parseRecipients(raw string) []string {
 	return out
 }
 
-func parseStringList(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return []string{}
-	}
-	var vals []string
-	if err := json.Unmarshal([]byte(raw), &vals); err != nil {
-		return []string{}
-	}
-	out := make([]string, 0, len(vals))
-	for _, v := range vals {
-		v = strings.TrimSpace(v)
-		if v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
 func defaultBody(job database.AlertDispatchJobWithDetails) string {
 	var b strings.Builder
 	b.WriteString("CH-UI Alert\n\n")
@@ -413,97 +325,6 @@ func retryBackoff(attempt int) time.Duration {
 		return 30 * time.Minute
 	}
 	return d
-}
-
-func (d *Dispatcher) tryEscalationForDispatchJob(job database.AlertDispatchJobWithDetails, subject, body, rootErr string, failedAttempt int) string {
-	if job.RouteEscalationChannelID == nil || strings.TrimSpace(*job.RouteEscalationChannelID) == "" {
-		return ""
-	}
-	if job.RouteEscalationAfterFailures > 0 && failedAttempt < job.RouteEscalationAfterFailures {
-		return ""
-	}
-	if job.EscalationChannelType == nil || job.EscalationChannelConfigEncrypted == nil {
-		return "escalation skipped: channel metadata unavailable"
-	}
-	recipients := parseRecipients(coalesce(job.RouteEscalationRecipientsJSON, ""))
-	if len(recipients) == 0 {
-		recipients = parseRecipients(job.RouteRecipientsJSON)
-	}
-	if len(recipients) == 0 {
-		return "escalation skipped: no escalation recipients"
-	}
-	decrypted, err := crypto.Decrypt(*job.EscalationChannelConfigEncrypted, d.cfg.AppSecretKey)
-	if err != nil {
-		return "escalation decrypt failed: " + err.Error()
-	}
-	cfg := map[string]interface{}{}
-	if err := json.Unmarshal([]byte(decrypted), &cfg); err != nil {
-		return "escalation config parse failed: " + err.Error()
-	}
-	escalationSubject := "[ESCALATED] " + subject
-	escalationBody := body + "\n\nEscalation reason:\n" + rootErr
-	if _, err := d.sendByChannelType(context.Background(), *job.EscalationChannelType, cfg, recipients, escalationSubject, escalationBody); err != nil {
-		return "escalation send failed: " + err.Error()
-	}
-	return "escalated via " + coalesce(job.EscalationChannelName, "channel")
-}
-
-func (d *Dispatcher) tryEscalationForDigest(digest database.AlertRouteDigestWithDetails, subject, body, rootErr string, failedAttempt int) string {
-	if digest.EscalationChannelID == nil || strings.TrimSpace(*digest.EscalationChannelID) == "" {
-		return ""
-	}
-	if digest.EscalationAfterFailures > 0 && failedAttempt < digest.EscalationAfterFailures {
-		return ""
-	}
-	if digest.EscalationChannelType == nil || digest.EscalationChannelConfigEncrypted == nil {
-		return "digest escalation skipped: channel metadata unavailable"
-	}
-	recipients := parseRecipients(coalesce(digest.EscalationRecipientsJSON, ""))
-	if len(recipients) == 0 {
-		recipients = parseRecipients(digest.RouteRecipientsJSON)
-	}
-	if len(recipients) == 0 {
-		return "digest escalation skipped: no recipients"
-	}
-	decrypted, err := crypto.Decrypt(*digest.EscalationChannelConfigEncrypted, d.cfg.AppSecretKey)
-	if err != nil {
-		return "digest escalation decrypt failed: " + err.Error()
-	}
-	cfg := map[string]interface{}{}
-	if err := json.Unmarshal([]byte(decrypted), &cfg); err != nil {
-		return "digest escalation config parse failed: " + err.Error()
-	}
-	escalationSubject := "[ESCALATED] " + subject
-	escalationBody := body + "\n\nEscalation reason:\n" + rootErr
-	if _, err := d.sendByChannelType(context.Background(), *digest.EscalationChannelType, cfg, recipients, escalationSubject, escalationBody); err != nil {
-		return "digest escalation send failed: " + err.Error()
-	}
-	return "digest escalated via " + coalesce(digest.EscalationChannelName, "channel")
-}
-
-func renderDigestBody(digest database.AlertRouteDigestWithDetails) string {
-	titles := parseStringList(digest.TitlesJSON)
-	var b strings.Builder
-	b.WriteString("CH-UI Alert Digest\n\n")
-	b.WriteString("Event type: " + digest.EventType + "\n")
-	b.WriteString("Severity: " + strings.ToUpper(digest.Severity) + "\n")
-	b.WriteString("Events in window: " + strconv.Itoa(digest.EventCount) + "\n")
-	b.WriteString("Window: " + digest.BucketStart + " -> " + digest.BucketEnd + "\n")
-	b.WriteString("Channel: " + digest.ChannelName + " (" + digest.ChannelType + ")\n")
-	if len(titles) > 0 {
-		b.WriteString("\nTitles:\n")
-		for i, title := range titles {
-			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, title))
-			if i >= 14 {
-				remaining := len(titles) - (i + 1)
-				if remaining > 0 {
-					b.WriteString(fmt.Sprintf("... and %d more\n", remaining))
-				}
-				break
-			}
-		}
-	}
-	return b.String()
 }
 
 func coalesce(v *string, fallback string) string {

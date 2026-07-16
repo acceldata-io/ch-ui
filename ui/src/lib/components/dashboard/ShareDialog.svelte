@@ -2,6 +2,7 @@
   import { apiGet, apiPost, apiDel } from '../../api/client'
   import { success as toastSuccess, error as toastError } from '../../stores/toast.svelte'
   import { withBase } from '../../basePath'
+  import { formatDate } from '../../utils/format'
   import Button from '../common/Button.svelte'
   import Sheet from '../common/Sheet.svelte'
   import Spinner from '../common/Spinner.svelte'
@@ -163,13 +164,6 @@
     }
   }
 
-  function formatDate(ts: string): string {
-    try {
-      return new Date(ts).toLocaleString()
-    } catch {
-      return ts
-    }
-  }
 </script>
 
 <Sheet {open} title="Share Dashboard" size="md" onclose={onclose}>

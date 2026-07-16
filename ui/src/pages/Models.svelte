@@ -6,6 +6,7 @@
   import { isProActive } from '../lib/stores/license.svelte'
   import { getSession } from '../lib/stores/session.svelte'
   import { refreshModelCache } from '../lib/editor/completions'
+  import { formatDate } from '../lib/utils/format'
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
   import { openModelTab } from '../lib/stores/tabs.svelte'
   import ConfirmDialog from '../lib/components/common/ConfirmDialog.svelte'
@@ -425,11 +426,6 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
-
-  function formatDate(d: string | null): string {
-    if (!d) return '\u2014'
-    return new Date(d).toLocaleString()
-  }
 
   function statusBadge(status: string): string {
     switch (status) {

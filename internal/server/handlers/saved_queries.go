@@ -69,7 +69,7 @@ func (h *SavedQueriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	queries, err := h.DB.GetSavedQueries()
 	if err != nil {
 		slog.Error("Failed to list saved queries", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved queries"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved queries")
 		return
 	}
 
@@ -84,18 +84,18 @@ func (h *SavedQueriesHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *SavedQueriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query ID is required"})
+		writeError(w, http.StatusBadRequest, "Query ID is required")
 		return
 	}
 
 	query, err := h.DB.GetSavedQueryByID(id)
 	if err != nil {
 		slog.Error("Failed to get saved query", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved query")
 		return
 	}
 	if query == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusNotFound, "Saved query not found")
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *SavedQueriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *SavedQueriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
@@ -118,18 +118,18 @@ func (h *SavedQueriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ConnectionID string            `json:"connection_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	name := strings.TrimSpace(body.Name)
 	sqlQuery := strings.TrimSpace(body.Query)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name is required"})
+		writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 	if sqlQuery == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query is required"})
+		writeError(w, http.StatusBadRequest, "Query is required")
 		return
 	}
 
@@ -148,7 +148,7 @@ func (h *SavedQueriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("Failed to create saved query", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to create saved query")
 		return
 	}
 
@@ -171,24 +171,24 @@ func (h *SavedQueriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query ID is required"})
+		writeError(w, http.StatusBadRequest, "Query ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetSavedQueryByID(id)
 	if err != nil {
 		slog.Error("Failed to get saved query for update", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved query")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusNotFound, "Saved query not found")
 		return
 	}
 
@@ -200,7 +200,7 @@ func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ConnectionID *string           `json:"connection_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -220,7 +220,7 @@ func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Name != nil {
 		n := strings.TrimSpace(*body.Name)
 		if n == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name cannot be empty"})
+			writeError(w, http.StatusBadRequest, "Name cannot be empty")
 			return
 		}
 		params.Name = n
@@ -233,7 +233,7 @@ func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Query != nil {
 		q := strings.TrimSpace(*body.Query)
 		if q == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query cannot be empty"})
+			writeError(w, http.StatusBadRequest, "Query cannot be empty")
 			return
 		}
 		params.Query = q
@@ -249,13 +249,13 @@ func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !changed {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "No valid fields to update"})
+		writeError(w, http.StatusBadRequest, "No valid fields to update")
 		return
 	}
 
 	if err := h.DB.UpdateSavedQuery(id, params); err != nil {
 		slog.Error("Failed to update saved query", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to update saved query")
 		return
 	}
 
@@ -278,30 +278,30 @@ func (h *SavedQueriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *SavedQueriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query ID is required"})
+		writeError(w, http.StatusBadRequest, "Query ID is required")
 		return
 	}
 
 	existing, err := h.DB.GetSavedQueryByID(id)
 	if err != nil {
 		slog.Error("Failed to get saved query for delete", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved query")
 		return
 	}
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusNotFound, "Saved query not found")
 		return
 	}
 
 	if err := h.DB.DeleteSavedQuery(id); err != nil {
 		slog.Error("Failed to delete saved query", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to delete saved query")
 		return
 	}
 
@@ -319,24 +319,24 @@ func (h *SavedQueriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *SavedQueriesHandler) Duplicate(w http.ResponseWriter, r *http.Request) {
 	session := middleware.GetSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Query ID is required"})
+		writeError(w, http.StatusBadRequest, "Query ID is required")
 		return
 	}
 
 	original, err := h.DB.GetSavedQueryByID(id)
 	if err != nil {
 		slog.Error("Failed to get saved query for duplicate", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to fetch saved query")
 		return
 	}
 	if original == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Saved query not found"})
+		writeError(w, http.StatusNotFound, "Saved query not found")
 		return
 	}
 
@@ -369,7 +369,7 @@ func (h *SavedQueriesHandler) Duplicate(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		slog.Error("Failed to duplicate saved query", "error", err, "id", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to duplicate saved query"})
+		writeError(w, http.StatusInternalServerError, "Failed to duplicate saved query")
 		return
 	}
 

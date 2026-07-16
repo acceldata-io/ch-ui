@@ -66,3 +66,8 @@ license/main.go
 posts.md
 ch-ui-server.pid
 CLAUDE.md
+
+# Demo
+/demo
+demo/license.json
+demo/.env.demo.local

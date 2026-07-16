@@ -4,6 +4,7 @@
   import { apiGet, apiPost, apiPut, apiDel } from '../lib/api/client'
   import { success as toastSuccess, error as toastError } from '../lib/stores/toast.svelte'
   import { openSavedQueryTab } from '../lib/stores/tabs.svelte'
+  import { formatDate } from '../lib/utils/format'
   import Button from '../lib/components/common/Button.svelte'
   import Combobox from '../lib/components/common/Combobox.svelte'
   import Spinner from '../lib/components/common/Spinner.svelte'
@@ -261,15 +262,6 @@
     showRunSheet = false
   }
 
-  function formatTime(ts: string | null): string {
-    if (!ts) return '—'
-    try {
-      return new Date(ts).toLocaleString()
-    } catch {
-      return ts
-    }
-  }
-
   function statusBadge(status: string | null): { cls: string; label: string } {
     switch (status) {
       case 'success': return { cls: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300', label: 'Success' }
@@ -323,8 +315,8 @@
                 </div>
                 <div class="flex items-center gap-3 mt-1 text-xs text-gray-500 flex-wrap">
                   <span class="px-1.5 py-0.5 rounded {badge.cls}">{badge.label}</span>
-                  <span>Last: {formatTime(schedule.last_run_at)}</span>
-                  <span>Next: {formatTime(schedule.next_run_at)}</span>
+                  <span>Last: {formatDate(schedule.last_run_at)}</span>
+                  <span>Next: {formatDate(schedule.next_run_at)}</span>
                   {#if queryRef}
                     <span class="text-gray-400">{queryRef.name}</span>
                   {/if}
@@ -388,7 +380,7 @@
                         {#each runs as run}
                           {@const rb = statusBadge(run.status)}
                           <tr class="ds-table-row">
-                            <td class="ds-td-compact">{formatTime(run.started_at)}</td>
+                            <td class="ds-td-compact">{formatDate(run.started_at)}</td>
                             <td class="ds-td-compact"><span class="ds-badge {rb.cls}">{rb.label}</span></td>
                             <td class="ds-td-compact text-right">{run.elapsed_ms}ms</td>
                             <td class="ds-td-compact text-right">{run.rows_affected}</td>
@@ -526,11 +518,11 @@
       <div class="grid grid-cols-2 gap-3">
         <div class="surface-card rounded-lg p-3">
           <p class="text-xs text-gray-500">Started</p>
-          <p class="text-sm text-gray-800 dark:text-gray-100 mt-1">{formatTime(selectedRun.started_at)}</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100 mt-1">{formatDate(selectedRun.started_at)}</p>
         </div>
         <div class="surface-card rounded-lg p-3">
           <p class="text-xs text-gray-500">Finished</p>
-          <p class="text-sm text-gray-800 dark:text-gray-100 mt-1">{formatTime(selectedRun.finished_at)}</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100 mt-1">{formatDate(selectedRun.finished_at)}</p>
         </div>
         <div class="surface-card rounded-lg p-3">
           <p class="text-xs text-gray-500">Elapsed</p>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Pipeline } from '../../types/pipelines'
+  import { formatDate } from '../../utils/format'
   import Button from '../common/Button.svelte'
   import ConfirmDialog from '../common/ConfirmDialog.svelte'
   import Spinner from '../common/Spinner.svelte'
@@ -66,14 +67,6 @@
     }
   }
 
-  function formatDate(date: string): string {
-    return new Date(date).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
 </script>
 
 <div class="flex flex-col h-full">

@@ -9,11 +9,21 @@ import (
 	"github.com/caioricciuti/ch-ui/internal/tunnel"
 )
 
-// writeJSON writes a JSON response.
+// writeJSON writes a JSON response. Private copy of the handlers package
+// helper: middleware cannot import handlers without an import cycle.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// writeError writes the canonical JSON error envelope:
+// {"success": false, "error": message}. Keep in sync with handlers.writeError.
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]interface{}{
+		"success": false,
+		"error":   message,
+	})
 }
 
 // Session returns a middleware that validates the chui_session cookie.
@@ -22,17 +32,17 @@ func Session(db *database.DB, _ *tunnel.Gateway) func(http.Handler) http.Handler
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cookie, err := r.Cookie("chui_session")
 			if err != nil || cookie.Value == "" {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+				writeError(w, http.StatusUnauthorized, "Not authenticated")
 				return
 			}
 
 			session, err := db.GetSession(cookie.Value)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Session lookup failed"})
+				writeError(w, http.StatusInternalServerError, "Session lookup failed")
 				return
 			}
 			if session == nil {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired or invalid"})
+				writeError(w, http.StatusUnauthorized, "Session expired or invalid")
 				return
 			}
 
@@ -71,7 +81,7 @@ func RequireWriter() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			session := GetSession(r)
 			if session == nil || (session.UserRole != "admin" && session.UserRole != "analyst") {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Write access required (viewer is read-only)"})
+				writeError(w, http.StatusForbidden, "Write access required (viewer is read-only)")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -79,22 +89,22 @@ func RequireWriter() func(http.Handler) http.Handler {
 	}
 }
 
+// RequireAdmin gates admin-only routes on the session's resolved role — the
+// same SessionInfo.UserRole RequireWriter reads, which Session() already
+// computes as: an explicit DB role override for session.ClickhouseUser if
+// one exists, else the OIDC-derived per-session role, else "viewer". A raw
+// db.IsUserRole(session.ClickhouseUser, "admin") lookup here (the previous
+// implementation) breaks under SSO: every OIDC session shares one
+// ClickHouse service account, so it could only ever grant or deny admin to
+// all OIDC users at once, never distinguish between them by their actual
+// IdP group.
 func RequireAdmin(db *database.DB) func(http.Handler) http.Handler {
+	_ = db // kept for call-site signature compatibility; role now comes from SessionInfo
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			session := GetSession(r)
-			if session == nil {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Admin access required"})
-				return
-			}
-
-			isAdmin, err := db.IsUserRole(session.ClickhouseUser, "admin")
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Role check failed"})
-				return
-			}
-			if !isAdmin {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Admin access required"})
+			if session == nil || session.UserRole != "admin" {
+				writeError(w, http.StatusForbidden, "Admin access required")
 				return
 			}
 			next.ServeHTTP(w, r)

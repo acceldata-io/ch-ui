@@ -36,7 +36,16 @@ type AuthHandler struct {
 	Gateway     *tunnel.Gateway
 	RateLimiter *middleware.RateLimiter
 	Config      *config.Config
-	OIDC        *oidc.Provider // nil unless OIDC SSO is configured
+	OIDC        *oidc.Manager // holds the active OIDC provider; may be inactive
+}
+
+// sessionDuration returns the configured session lifetime (session_max_age /
+// SESSION_MAX_AGE), falling back to the 7-day default.
+func (h *AuthHandler) sessionDuration() time.Duration {
+	if h.Config != nil && h.Config.SessionMaxAge > 0 {
+		return time.Duration(h.Config.SessionMaxAge) * time.Second
+	}
+	return SessionDuration
 }
 
 // Routes returns a chi.Router with all auth routes mounted.
@@ -52,6 +61,9 @@ func (h *AuthHandler) Routes(r chi.Router) {
 		// SSO is a Pro feature: RequirePro returns 402 without an active license
 		// (GET is still allowed during the read-only grace window, so SSO login
 		// keeps working for the grace period rather than locking users out).
+		// The routes are always registered; the handlers fail gracefully when no
+		// provider is active, so admin-saved (DB) SSO config can come online
+		// without a restart.
 		r.With(middleware.RequirePro(h.Config)).Get("/oidc/login", h.OIDCLogin)
 		r.With(middleware.RequirePro(h.Config)).Get("/oidc/callback", h.OIDCCallback)
 	}
@@ -63,7 +75,7 @@ func (h *AuthHandler) Routes(r chi.Router) {
 //
 // GET /api/auth/config
 func (h *AuthHandler) AuthConfig(w http.ResponseWriter, r *http.Request) {
-	oidcEnabled := h.OIDC != nil && h.Config != nil && h.Config.ProAccess() != config.ProNone
+	oidcEnabled := h.OIDC != nil && h.OIDC.Active() && h.Config != nil && h.Config.ProAccess() != config.ProNone
 	resp := map[string]interface{}{
 		"password_login": true,
 		"oidc_enabled":   oidcEnabled,
@@ -188,13 +200,13 @@ func (h *AuthHandler) auditLoginFailure(username string, conn *database.Connecti
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Username is required"})
+		writeError(w, http.StatusBadRequest, "Username is required")
 		return
 	}
 	req.ConnectionID = req.resolvedConnectionID()
@@ -208,6 +220,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		retrySeconds := int(ipResult.RetryAfter.Seconds())
 		slog.Warn("IP rate limited", "ip", clientIP, "retryAfter", retrySeconds)
 		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"success":    false,
 			"error":      "Too many login attempts from this IP",
 			"retryAfter": retrySeconds,
 		})
@@ -218,12 +231,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	connections, err := h.DB.GetConnections()
 	if err != nil {
 		slog.Error("Failed to get connections", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connections"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connections")
 		return
 	}
 
 	if len(connections) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"success": false,
 			"error":   "No connections available",
 			"message": "No connections are configured. Please set up an agent first.",
 		})
@@ -239,7 +253,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if conn == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection not found"})
+			writeError(w, http.StatusBadRequest, "Connection not found")
 			return
 		}
 	} else {
@@ -252,6 +266,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		retrySeconds := int(userResult.RetryAfter.Seconds())
 		slog.Warn("User rate limited", "user", req.Username, "connection", conn.ID, "retryAfter", retrySeconds)
 		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"success":    false,
 			"error":      "Too many login attempts for this user",
 			"retryAfter": retrySeconds,
 		})
@@ -270,7 +285,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !online {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"success": false,
 			"error":   "Connection offline",
 			"message": "The tunnel agent for this connection is not online. Please check that the agent is running.",
 		})
@@ -284,7 +300,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.RateLimiter.RecordAttempt(userKey, "user")
 		slog.Info("Login failed: connection test error", "user", req.Username, "error", err)
 		h.auditLoginFailure(req.Username, conn, clientIP, "connection test error")
-		writeJSON(w, http.StatusUnauthorized, map[string]string{
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"success": false,
 			"error":   "Authentication failed",
 			"message": sanitizeClickHouseAuthMessage(err.Error()),
 		})
@@ -299,7 +316,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Info("Login failed: bad credentials", "user", req.Username)
 		h.auditLoginFailure(req.Username, conn, clientIP, "invalid credentials")
-		writeJSON(w, http.StatusUnauthorized, map[string]string{
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"success": false,
 			"error":   "Authentication failed",
 			"message": sanitizeClickHouseAuthMessage(errMsg),
 		})
@@ -307,18 +325,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Resolve CH-UI role ---
-	role := h.resolveUserRole(conn.ID, req.Username, req.Password, clientIP)
+	role, roleNote := h.resolveUserRole(conn.ID, req.Username, req.Password, clientIP)
 
 	// --- Encrypt password and create session ---
 	encryptedPwd, err := crypto.Encrypt(req.Password, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to encrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+		writeError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	token := uuid.NewString()
-	expiresAt := time.Now().UTC().Add(SessionDuration).Format(time.RFC3339)
+	expiresAt := time.Now().UTC().Add(h.sessionDuration()).Format(time.RFC3339)
 
 	_, err = h.DB.CreateSession(database.CreateSessionParams{
 		ConnectionID:      conn.ID,
@@ -330,7 +348,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create session"})
+		writeError(w, http.StatusInternalServerError, "Failed to create session")
 		return
 	}
 
@@ -339,7 +357,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Name:     SessionCookie,
 		Value:    token,
 		Path:     "/",
-		MaxAge:   int(SessionDuration.Seconds()),
+		MaxAge:   int(h.sessionDuration().Seconds()),
 		HttpOnly: true,
 		Secure:   shouldUseSecureCookie(r, h.Config),
 		SameSite: http.SameSiteLaxMode,
@@ -374,6 +392,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"session": map[string]interface{}{
 			"user":             req.Username,
 			"role":             role,
+			"roleNote":         roleNote,
 			"connectionId":     conn.ID,
 			"connectionName":   conn.Name,
 			"connectionOnline": true,
@@ -436,7 +455,7 @@ func (h *AuthHandler) Session(w http.ResponseWriter, r *http.Request) {
 	session, err := h.DB.GetSession(cookie.Value)
 	if err != nil {
 		slog.Error("Failed to get session", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Session lookup failed"})
+		writeError(w, http.StatusInternalServerError, "Session lookup failed")
 		return
 	}
 	if session == nil {
@@ -511,7 +530,7 @@ func (h *AuthHandler) Connections(w http.ResponseWriter, r *http.Request) {
 	connections, err := h.DB.GetConnections()
 	if err != nil {
 		slog.Error("Failed to get connections", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connections"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connections")
 		return
 	}
 
@@ -537,19 +556,19 @@ func (h *AuthHandler) Connections(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(SessionCookie)
 	if err != nil || cookie.Value == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
 
 	existingSession, err := h.DB.GetSession(cookie.Value)
 	if err != nil || existingSession == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired or invalid"})
+		writeError(w, http.StatusUnauthorized, "Session expired or invalid")
 		return
 	}
 
 	var req switchConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.ConnectionID = req.resolvedConnectionID()
@@ -559,18 +578,18 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	req.Username = strings.TrimSpace(req.Username)
 
 	if req.ConnectionID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "connection_id (or connectionId) is required"})
+		writeError(w, http.StatusBadRequest, "connection_id (or connectionId) is required")
 		return
 	}
 
 	newConn, err := h.DB.GetConnectionByID(req.ConnectionID)
 	if err != nil {
 		slog.Error("Failed to get connection", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve connection"})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve connection")
 		return
 	}
 	if newConn == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Connection not found"})
+		writeError(w, http.StatusBadRequest, "Connection not found")
 		return
 	}
 
@@ -586,7 +605,8 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !online {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"success": false,
 			"error":   "Connection offline",
 			"message": "The tunnel agent for this connection is not online. Please check that the agent is running.",
 		})
@@ -596,7 +616,8 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	testResult, err := h.Gateway.TestConnection(newConn.ID, req.Username, req.Password, 15*time.Second)
 	if err != nil {
 		slog.Info("Switch connection failed: test error", "user", req.Username, "error", err)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"success": false,
 			"error":   "Authentication failed",
 			"message": sanitizeClickHouseAuthMessage(err.Error()),
 		})
@@ -607,7 +628,8 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 		if errMsg == "" {
 			errMsg = "Invalid credentials"
 		}
-		writeJSON(w, http.StatusUnauthorized, map[string]string{
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"success": false,
 			"error":   "Authentication failed",
 			"message": sanitizeClickHouseAuthMessage(errMsg),
 		})
@@ -615,12 +637,12 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientIP := getClientIP(r)
-	role := h.resolveUserRole(newConn.ID, req.Username, req.Password, clientIP)
+	role, roleNote := h.resolveUserRole(newConn.ID, req.Username, req.Password, clientIP)
 
 	encryptedPwd, err := crypto.Encrypt(req.Password, h.Config.AppSecretKey)
 	if err != nil {
 		slog.Error("Failed to encrypt password", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+		writeError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -629,7 +651,7 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := uuid.NewString()
-	expiresAt := time.Now().UTC().Add(SessionDuration).Format(time.RFC3339)
+	expiresAt := time.Now().UTC().Add(h.sessionDuration()).Format(time.RFC3339)
 
 	_, err = h.DB.CreateSession(database.CreateSessionParams{
 		ConnectionID:      newConn.ID,
@@ -641,7 +663,7 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create session"})
+		writeError(w, http.StatusInternalServerError, "Failed to create session")
 		return
 	}
 
@@ -649,7 +671,7 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 		Name:     SessionCookie,
 		Value:    token,
 		Path:     "/",
-		MaxAge:   int(SessionDuration.Seconds()),
+		MaxAge:   int(h.sessionDuration().Seconds()),
 		HttpOnly: true,
 		Secure:   shouldUseSecureCookie(r, h.Config),
 		SameSite: http.SameSiteLaxMode,
@@ -679,6 +701,7 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 		"session": map[string]interface{}{
 			"user":             req.Username,
 			"role":             role,
+			"roleNote":         roleNote,
 			"connectionId":     newConn.ID,
 			"connectionName":   newConn.Name,
 			"connectionOnline": true,
@@ -691,7 +714,10 @@ func (h *AuthHandler) SwitchConnection(w http.ResponseWriter, r *http.Request) {
 
 // ---------- ClickHouse role detection ----------
 
-func (h *AuthHandler) detectClickHouseRole(connectionID, username, password string) string {
+// detectClickHouseRole classifies the ClickHouse user as admin/analyst/viewer.
+// degraded=true means the classification came from a connection-level failure
+// (tunnel offline, timeout) rather than the user's actual grants.
+func (h *AuthHandler) detectClickHouseRole(connectionID, username, password string) (role string, degraded bool) {
 	var err error
 	_, err = h.Gateway.ExecuteQuery(
 		connectionID,
@@ -701,14 +727,14 @@ func (h *AuthHandler) detectClickHouseRole(connectionID, username, password stri
 	)
 	if err == nil {
 		slog.Debug("Role detected as admin (system.users accessible)", "user", username)
-		return "admin"
+		return "admin", false
 	}
 
 	errStr := err.Error()
 
 	if !isPermissionError(errStr) {
-		slog.Debug("Role defaulting to viewer (non-permission error from system.users)", "user", username, "error", errStr)
-		return "viewer"
+		slog.Warn("Role detection degraded: could not verify privileges, defaulting to viewer", "user", username, "error", errStr)
+		return "viewer", true
 	}
 
 	result, err := h.Gateway.ExecuteQuery(
@@ -718,40 +744,50 @@ func (h *AuthHandler) detectClickHouseRole(connectionID, username, password stri
 		10*time.Second,
 	)
 	if err != nil {
-		slog.Debug("Role defaulting to viewer (system.grants query failed)", "user", username, "error", err)
-		return "viewer"
+		if isPermissionError(err.Error()) {
+			slog.Debug("Role detected as viewer (system.grants not readable)", "user", username)
+			return "viewer", false
+		}
+		slog.Warn("Role detection degraded: system.grants query failed, defaulting to viewer", "user", username, "error", err)
+		return "viewer", true
 	}
 
-	role := classifyGrants(result)
+	role = classifyGrants(result)
 	slog.Debug("Role detected from grants", "user", username, "role", role)
-	return role
+	return role, false
 }
 
-func (h *AuthHandler) resolveUserRole(connectionID, username, password, clientIP string) string {
+// resolveUserRole returns the effective app role plus a human-readable note
+// when the outcome is surprising (implicit admin ignored, degraded detection)
+// so the UI can tell the user instead of silently downgrading them.
+func (h *AuthHandler) resolveUserRole(connectionID, username, password, clientIP string) (string, string) {
 	manualRole, err := h.DB.GetUserRole(username)
 	if err == nil && manualRole != "" {
 		slog.Debug("Using manually assigned role", "user", username, "role", manualRole)
-		return manualRole
+		return manualRole, ""
 	}
 	if err != nil {
 		slog.Warn("Failed to read manual role override", "user", username, "error", err)
 	}
 
-	detectedRole := h.detectClickHouseRole(connectionID, username, password)
+	detectedRole, degraded := h.detectClickHouseRole(connectionID, username, password)
+	if degraded {
+		return detectedRole, "Could not verify your ClickHouse privileges (connection error) — defaulting to viewer for this session. Log in again to retry."
+	}
 	if detectedRole != "admin" {
-		return detectedRole
+		return detectedRole, ""
 	}
 
 	adminCount, err := h.DB.CountUsersWithRole("admin")
 	if err != nil {
 		slog.Warn("Failed to count admin overrides; denying implicit admin", "user", username, "error", err)
-		return "viewer"
+		return "viewer", ""
 	}
 
 	if adminCount == 0 {
 		if err := h.DB.SetUserRole(username, "admin"); err != nil {
 			slog.Warn("Failed to bootstrap first admin role", "user", username, "error", err)
-			return "viewer"
+			return "viewer", ""
 		}
 
 		_ = h.DB.CreateAuditLog(database.AuditLogParams{
@@ -763,11 +799,11 @@ func (h *AuthHandler) resolveUserRole(connectionID, username, password, clientIP
 		})
 
 		slog.Info("Bootstrapped first explicit admin role", "user", username)
-		return "admin"
+		return "admin", ""
 	}
 
 	slog.Info("Ignoring implicit ClickHouse admin privileges without explicit CH-UI admin override", "user", username)
-	return "viewer"
+	return "viewer", "Your ClickHouse user has admin privileges, but CH-UI admin is already assigned to another user. Ask an existing admin to grant you the admin role in Admin → Users."
 }
 
 func classifyGrants(result *tunnel.QueryResult) string {
