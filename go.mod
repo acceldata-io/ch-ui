@@ -1,6 +1,6 @@
 module github.com/caioricciuti/ch-ui
 
-go 1.25.11
+go 1.25.12
 
 require (
 	github.com/IBM/sarama v1.50.3
