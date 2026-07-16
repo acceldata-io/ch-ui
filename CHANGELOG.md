@@ -5,6 +5,64 @@ All notable changes to CH-UI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-07-16
+
+CH-UI is now all-in on self-hosted: the cloud proof of concept is gone and its
+best features live here, behind the same offline-verified Pro license.
+
+### Added
+
+- Ask AI in the SQL editor: describe the query you want and get SQL generated
+  against your schema, using your own AI provider key (Pro).
+- Self-serve Pro licensing: buy at [ch-ui.com](https://ch-ui.com), receive the
+  signed license by email within a minute, and activate it in Settings. A
+  30-day free trial can be started right from the app. Licenses stay verified
+  offline, so air-gapped installs keep working.
+- SSO configuration UI: OIDC is now set up from the Admin page instead of
+  environment variables, and the authorization flow uses PKCE.
+- Data retention manager: background pruning of history tables (audit logs,
+  alert events, schedule/pipeline/model runs, sync logs) with per-table
+  windows configurable in Admin. New databases use incremental auto-vacuum so
+  reclaimed space is returned to the OS.
+- Runtime multi-connection support: add direct-URL ClickHouse connections and
+  switch between them without restarting.
+- Helm chart under `deploy/helm/ch-ui` for Kubernetes installs.
+- `session_max_age` config option (and `SESSION_MAX_AGE` env var) to control
+  session lifetime; default stays 7 days.
+
+### Changed
+
+- Alert routing is simpler: rules bind directly to channels. Existing
+  rule-to-channel bindings are migrated automatically; digest and escalation
+  policies were removed.
+- Dev mode is now opt-in (`--dev` flag or `NODE_ENV=development`). Production
+  is the default: HSTS is sent, logs are info-level, and localhost origins are
+  no longer auto-allowed in CORS.
+- All API errors now share one JSON shape.
+- Unknown keys in the config file are reported at startup instead of being
+  silently ignored.
+- Trial licenses are delivered by email only, with server-side abuse
+  protection (alias dedupe, disposable-domain blocking, MX checks, daily cap).
+- Builds require Go 1.25.12 (fixes crypto/tls GO-2026-5856 from the standard
+  library).
+
+### Removed
+
+- Governance lineage: it was slow and unreliable, and its tables are dropped
+  on upgrade.
+- CH-UI Cloud: all references removed; the product is self-hosted only.
+- Gitpod demo configuration.
+
+### Upgrade notes
+
+- The database migrates automatically on first start and the upgrade was
+  tested against a v2.5.3 schema. Alert routes carry over.
+- Retention pruning is ON by default (audit logs 90 days, alert events 60,
+  pipeline run logs 30, and so on). If you need longer history, set a window
+  to 0 (keep forever) in Admin before old rows age out.
+- Lineage data is deleted on upgrade. Back up your database first if you want
+  to keep it.
+
 ## [2.5.3] - 2026-06-29
 
 ### Fixed
