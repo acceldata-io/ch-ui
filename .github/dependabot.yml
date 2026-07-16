@@ -19,6 +19,11 @@ updates:
       ui-dependencies:
         patterns:
           - "*"
+    ignore:
+      # svelte-check crashes under TypeScript 7; revisit when the Svelte
+      # toolchain supports it.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
