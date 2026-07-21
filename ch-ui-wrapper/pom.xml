@@ -31,6 +31,7 @@
         <snakeyaml.version>2.0</snakeyaml.version>
         <jackson-bom.version>2.15.0</jackson-bom.version>
         <logback.version>1.4.12</logback.version>
+            <spring-framework.version>5.3.39</spring-framework.version>
     </properties>
 
     <dependencies>
