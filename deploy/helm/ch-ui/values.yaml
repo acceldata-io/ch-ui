@@ -25,6 +25,13 @@ env: {}
   # CLICKHOUSE_URL: http://clickhouse:8123
   # AUDIT_FORWARD_STDOUT: "true"
 
+# CH-UI Pro license from an existing Secret, mounted read-only and loaded at
+# startup (takes precedence over a license activated in the UI). Create it with:
+#   kubectl create secret generic ch-ui-license --from-file=license.json
+license:
+  existingSecret: ""
+  secretKey: license.json
+
 persistence:
   enabled: true
   size: 5Gi

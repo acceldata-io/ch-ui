@@ -446,6 +446,28 @@ const (
 	ProGrace
 )
 
+// LicenseFromEnv returns license JSON supplied through the environment:
+// CHUI_LICENSE_FILE points at a file (a mounted Kubernetes Secret, typically)
+// and takes precedence over CHUI_LICENSE, which carries the JSON inline. The
+// second return value names the source for logging. Both empty means the
+// license comes from the database (activated in the UI) or is absent.
+func LicenseFromEnv() (string, string) {
+	if path := strings.TrimSpace(os.Getenv("CHUI_LICENSE_FILE")); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			slog.Warn("Could not read CHUI_LICENSE_FILE", "path", path, "error", err)
+		} else if lic := strings.TrimSpace(string(data)); lic != "" {
+			return lic, "CHUI_LICENSE_FILE (" + path + ")"
+		} else {
+			slog.Warn("CHUI_LICENSE_FILE is empty", "path", path)
+		}
+	}
+	if lic := strings.TrimSpace(os.Getenv("CHUI_LICENSE")); lic != "" {
+		return lic, "CHUI_LICENSE"
+	}
+	return "", ""
+}
+
 // ProAccess validates the stored license once and returns the current Pro
 // entitlement state.
 func (c *Config) ProAccess() ProAccess {

@@ -50,6 +50,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "ch-ui.secretName" . }}
                   key: {{ .Values.existingSecretKey }}
+            {{- if .Values.license.existingSecret }}
+            - name: CHUI_LICENSE_FILE
+              value: /etc/ch-ui/license/{{ .Values.license.secretKey }}
+            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
@@ -71,7 +75,17 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/data
+            {{- if .Values.license.existingSecret }}
+            - name: license
+              mountPath: /etc/ch-ui/license
+              readOnly: true
+            {{- end }}
       volumes:
+        {{- if .Values.license.existingSecret }}
+        - name: license
+          secret:
+            secretName: {{ .Values.license.existingSecret }}
+        {{- end }}
         - name: data
         {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:

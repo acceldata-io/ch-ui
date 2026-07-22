@@ -5,6 +5,23 @@ All notable changes to CH-UI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- License as configuration: `CHUI_LICENSE_FILE` (path to the license JSON,
+  e.g. a mounted Kubernetes Secret) and `CHUI_LICENSE` (inline JSON) load and
+  activate the Pro license at startup, taking precedence over one activated in
+  the UI. An invalid or missing environment license logs a warning and never
+  blocks startup. The Helm chart exposes it as `license.existingSecret` /
+  `license.secretKey`.
+
+### Fixed
+
+- GitHub model sync now recurses into subdirectories, so nested dbt layouts
+  (`models/staging/`, `models/marts/`) import correctly. Thanks @bfxavierpx
+  for the first outside contribution (#138).
+
 ## [2.6.0] - 2026-07-16
 
 CH-UI is now all-in on self-hosted: the cloud proof of concept is gone and its

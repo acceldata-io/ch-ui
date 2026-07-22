@@ -19,6 +19,7 @@ import (
 	"github.com/caioricciuti/ch-ui/internal/config"
 	"github.com/caioricciuti/ch-ui/internal/database"
 	"github.com/caioricciuti/ch-ui/internal/embedded"
+	"github.com/caioricciuti/ch-ui/internal/license"
 	"github.com/caioricciuti/ch-ui/internal/server"
 	"github.com/caioricciuti/ch-ui/internal/version"
 	"github.com/spf13/cobra"
@@ -220,10 +221,24 @@ func runServer(cmd *cobra.Command) error {
 
 	slog.Info("Database initialized", "path", cfg.DatabasePath)
 
-	// Load stored license from database
-	if stored, err := db.GetSetting("license_json"); err == nil && stored != "" {
-		cfg.LicenseJSON = stored
-		slog.Info("License loaded from database")
+	// License precedence: CHUI_LICENSE_FILE > CHUI_LICENSE > database. The
+	// environment path serves config-as-code deploys (Kubernetes Secrets,
+	// Terraform); the database path serves licenses activated in the UI. An
+	// invalid environment license is ignored with a warning so a bad secret
+	// never blocks startup.
+	if lic, src := config.LicenseFromEnv(); lic != "" {
+		if info := license.ValidateLicense(lic); info.Valid {
+			cfg.LicenseJSON = lic
+			slog.Info("License loaded", "source", src, "edition", info.Edition, "expires_at", info.ExpiresAt)
+		} else {
+			slog.Warn("Ignoring invalid or expired license from environment", "source", src)
+		}
+	}
+	if cfg.LicenseJSON == "" {
+		if stored, err := db.GetSetting("license_json"); err == nil && stored != "" {
+			cfg.LicenseJSON = stored
+			slog.Info("License loaded from database")
+		}
 	}
 
 	// Connector manager runs one in-process connector per direct connection.
